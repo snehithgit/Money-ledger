@@ -2,8 +2,12 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, CommitmentStatus, ReviewInbox } from "../api/client";
 import { formatINR, statusColor } from "../lib/format";
+import TrendChart, { TrendPoint } from "../components/TrendChart";
+import CategoryBarChart, { CategorySpendPoint } from "../components/CategoryBarChart";
 
 type MonthSummary = {
+  year: number;
+  month: number;
   money_in: number;
   money_out: number;
   net: number;
@@ -11,16 +15,26 @@ type MonthSummary = {
   unclassified_count: number;
 };
 
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 export default function Dashboard() {
   const [summary, setSummary] = useState<MonthSummary | null>(null);
   const [commitments, setCommitments] = useState<CommitmentStatus[]>([]);
   const [inbox, setInbox] = useState<ReviewInbox | null>(null);
+  const [trend, setTrend] = useState<TrendPoint[] | null>(null);
+  const [categorySpend, setCategorySpend] = useState<CategorySpendPoint[] | null>(null);
   const now = new Date();
 
   useEffect(() => {
     api.get<MonthSummary>(`/reports/month-summary?year=${now.getFullYear()}&month=${now.getMonth() + 1}`).then(setSummary);
     api.get<CommitmentStatus[]>("/commitments").then(setCommitments);
     api.get<ReviewInbox>("/review/inbox").then(setInbox);
+    api.get<MonthSummary[]>("/reports/trend?months=6").then((rows) =>
+      setTrend(rows.map((r) => ({ label: `${MONTH_ABBR[r.month - 1]} ${r.year}`, money_in: r.money_in, money_out: r.money_out })))
+    );
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString().slice(0, 10);
+    api.get<CategorySpendPoint[]>(`/reports/category-spend?start=${monthStart}&end=${monthEnd}`).then(setCategorySpend);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -37,6 +51,11 @@ export default function Dashboard() {
         <StatCard label="Money in" value={summary ? formatINR(summary.money_in) : "…"} tone="income" />
         <StatCard label="Money out" value={summary ? formatINR(summary.money_out) : "…"} tone="expense" />
         <StatCard label="Net" value={summary ? formatINR(summary.net) : "…"} tone={summary && summary.net >= 0 ? "income" : "expense"} />
+      </div>
+
+      <div>
+        <h2 className="font-semibold mb-2">Cash flow, last 6 months</h2>
+        <div className="card">{trend ? <TrendChart data={trend} /> : <p className="text-sm text-muted">Loading…</p>}</div>
       </div>
 
       {inbox && inbox.total > 0 && (
@@ -92,24 +111,33 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div>
-        <h2 className="font-semibold mb-2">Spending by type this month</h2>
-        <div className="card space-y-2">
-          {summary && Object.keys(summary.by_out_type).length > 0 ? (
-            Object.entries(summary.by_out_type).map(([type, amount]) => (
-              <div key={type} className="flex items-center justify-between text-sm">
-                <span className="capitalize text-muted">{type.replace("_", " ")}</span>
-                <span className="font-medium">{formatINR(amount)}</span>
-              </div>
-            ))
-          ) : (
-            <p className="text-sm text-muted">Nothing recorded yet this month.</p>
-          )}
-          {summary && summary.unclassified_count > 0 && (
-            <p className="text-xs text-amber-700 pt-2 border-t border-line">
-              {summary.unclassified_count} transaction(s) this month are still unclassified and excluded from these totals.
-            </p>
-          )}
+      <div className="grid md:grid-cols-2 gap-4">
+        <div>
+          <h2 className="font-semibold mb-2">Top spending categories this month</h2>
+          <div className="card">
+            {categorySpend ? <CategoryBarChart data={categorySpend} /> : <p className="text-sm text-muted">Loading…</p>}
+          </div>
+        </div>
+
+        <div>
+          <h2 className="font-semibold mb-2">Spending by type this month</h2>
+          <div className="card space-y-2">
+            {summary && Object.keys(summary.by_out_type).length > 0 ? (
+              Object.entries(summary.by_out_type).map(([type, amount]) => (
+                <div key={type} className="flex items-center justify-between text-sm">
+                  <span className="capitalize text-muted">{type.replace("_", " ")}</span>
+                  <span className="font-medium">{formatINR(amount)}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-muted">Nothing recorded yet this month.</p>
+            )}
+            {summary && summary.unclassified_count > 0 && (
+              <p className="text-xs text-amber-700 pt-2 border-t border-line">
+                {summary.unclassified_count} transaction(s) this month are still unclassified and excluded from these totals.
+              </p>
+            )}
+          </div>
         </div>
       </div>
     </div>
