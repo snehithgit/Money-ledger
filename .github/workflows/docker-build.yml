@@ -1,9 +1,4 @@
-name: Build and publish Docker images
-
-# Builds the backend and frontend images and pushes them to GitHub
-# Container Registry (ghcr.io) - no extra secrets needed, GITHUB_TOKEN
-# is enough. Multi-arch (amd64 + arm64) so the same images run on a
-# regular PC/server or on something like a Raspberry Pi.
+name: Build and publish Docker image
 
 on:
   push:
@@ -23,14 +18,6 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - name: backend
-            context: ./backend
-          - name: frontend
-            context: ./frontend
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,7 +26,7 @@ jobs:
         id: image
         run: |
           repo_lc=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "name=${{ env.REGISTRY }}/${repo_lc}-${{ matrix.name }}" >> "$GITHUB_OUTPUT"
+          echo "name=${{ env.REGISTRY }}/${repo_lc}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU (for arm64 builds)
         uses: docker/setup-qemu-action@v3
@@ -48,8 +35,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        # Skip login on pull requests from forks - they can't push anyway,
-        # this job still builds (without --push) to validate the Dockerfile.
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
@@ -73,10 +58,11 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: .
+          file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

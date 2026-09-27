@@ -1,28 +1,21 @@
 services:
-  backend:
-    build: ./backend
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       - FINANCE_DATA_DIR=/data
     volumes:
       - finance_data:/data
     ports:
-      - "8000:8000" # direct API access for debugging / API docs at /docs
+      - "8080:8000" # UI + API, both on this one port
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 10s
-
-  frontend:
-    build: ./frontend
-    restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_healthy
-    ports:
-      - "8080:80"
 
 volumes:
   finance_data:
