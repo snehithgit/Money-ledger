@@ -311,4 +311,140 @@ def seed_all(session: Session) -> None:
         ],
     )
 
+    seed_merchant_rules(session, categories)
+
     session.commit()
+
+
+# --- Generic merchant/counterparty detection rules ----------------------
+#
+# Unlike the evidence-based rules above (tied to THIS user's specific
+# masked account numbers, each backed by real repeated evidence - see
+# backend/docs/rule_evidence.md), these are generic starter rules built
+# from well-known Indian UPI/PhonePe merchant naming conventions
+# (Swiggy, Amazon, hospital chains, mobile recharge/bill aggregators,
+# etc.). They exist so common, everyday spending gets auto-categorized
+# out of the box instead of piling up in Review for merchants that
+# aren't tied to a personal commitment.
+#
+# They are ordinary rules like any other - fully visible, editable,
+# and deletable from the Rules page. If your statement spells a
+# merchant differently (or a keyword below is too broad/narrow for
+# your data), just edit or delete that one rule; nothing here is
+# hard-coded elsewhere. Matches are case-insensitive "contains" against
+# `counterparty`, restricted to debits only so a refund/credit from the
+# same merchant doesn't get silently marked as an expense.
+#
+# (keyword, category name, transaction_type)
+MERCHANT_RULES: list[tuple[str, str, str]] = [
+    # Food delivery -> Food / Food Delivery
+    ("swiggy", "Food Delivery", "expense"),
+    ("zomato", "Food Delivery", "expense"),
+    ("eatsure", "Food Delivery", "expense"),
+    ("faasos", "Food Delivery", "expense"),
+    # Online groceries -> Food / Groceries
+    ("bigbasket", "Groceries", "expense"),
+    ("blinkit", "Groceries", "expense"),
+    ("zepto", "Groceries", "expense"),
+    ("dunzo", "Groceries", "expense"),
+    ("jiomart", "Groceries", "expense"),
+    ("dmart", "Groceries", "expense"),
+    # E-commerce -> Shopping / General Shopping
+    ("amazon", "General Shopping", "expense"),
+    ("flipkart", "General Shopping", "expense"),
+    ("myntra", "General Shopping", "expense"),
+    ("ajio", "General Shopping", "expense"),
+    ("meesho", "General Shopping", "expense"),
+    ("nykaa", "General Shopping", "expense"),
+    # Hospitals/clinics/diagnostics -> Medical / Doctor/Hospital
+    ("hospital", "Doctor/Hospital", "expense"),
+    ("clinic", "Doctor/Hospital", "expense"),
+    ("diagnostic", "Doctor/Hospital", "expense"),
+    ("fortis", "Doctor/Hospital", "expense"),
+    ("max healthcare", "Doctor/Hospital", "expense"),
+    ("pathlab", "Doctor/Hospital", "expense"),
+    # Pharmacies -> Medical / Pharmacy
+    ("pharmeasy", "Pharmacy", "expense"),
+    ("netmeds", "Pharmacy", "expense"),
+    ("1mg", "Pharmacy", "expense"),
+    ("medplus", "Pharmacy", "expense"),
+    ("apollo pharmacy", "Pharmacy", "expense"),
+    # Insurance -> Medical / Insurance
+    ("policybazaar", "Insurance", "expense"),
+    ("licindia", "Insurance", "expense"),
+    ("lic of india", "Insurance", "expense"),
+    ("star health", "Insurance", "expense"),
+    ("hdfc life", "Insurance", "expense"),
+    ("icici prudential", "Insurance", "expense"),
+    # Streaming/subscriptions -> Entertainment / Subscriptions
+    ("netflix", "Subscriptions", "expense"),
+    ("hotstar", "Subscriptions", "expense"),
+    ("spotify", "Subscriptions", "expense"),
+    ("sonyliv", "Subscriptions", "expense"),
+    ("zee5", "Subscriptions", "expense"),
+    ("youtube premium", "Subscriptions", "expense"),
+    # Movies/outings -> Entertainment / Outings
+    ("bookmyshow", "Outings", "expense"),
+    ("pvr", "Outings", "expense"),
+    ("inox", "Outings", "expense"),
+    # Fuel -> Transport / Fuel
+    ("indian oil", "Fuel", "expense"),
+    ("iocl", "Fuel", "expense"),
+    ("hpcl", "Fuel", "expense"),
+    ("bpcl", "Fuel", "expense"),
+    ("bharat petroleum", "Fuel", "expense"),
+    # Cabs -> Transport / Cab/Auto
+    ("uber", "Cab/Auto", "expense"),
+    ("ola cabs", "Cab/Auto", "expense"),
+    ("rapido", "Cab/Auto", "expense"),
+    # Recharge / bill payments -> Home / Utilities
+    ("airtel", "Utilities", "expense"),
+    ("jio recharge", "Utilities", "expense"),
+    ("myjio", "Utilities", "expense"),
+    ("reliance jio", "Utilities", "expense"),
+    ("vodafone", "Utilities", "expense"),
+    ("bsnl", "Utilities", "expense"),
+    ("tatasky", "Utilities", "expense"),
+    ("tata sky", "Utilities", "expense"),
+    ("dishtv", "Utilities", "expense"),
+    ("dish tv", "Utilities", "expense"),
+    ("bharat gas", "Utilities", "expense"),
+    ("indane", "Utilities", "expense"),
+    ("billdesk", "Utilities", "expense"),  # a real UPI bill-payment gateway used for many billers
+    ("bbps", "Utilities", "expense"),  # Bharat Bill Payment System - same idea
+    ("freecharge", "Utilities", "expense"),
+    # Travel -> Travel / Flights/Trains, Hotels, Trip Expenses
+    ("irctc", "Flights/Trains", "expense"),
+    ("indigo", "Flights/Trains", "expense"),
+    ("spicejet", "Flights/Trains", "expense"),
+    ("air india", "Flights/Trains", "expense"),
+    ("vistara", "Flights/Trains", "expense"),
+    ("akasa air", "Flights/Trains", "expense"),
+    ("oyo", "Hotels", "expense"),
+    ("makemytrip", "Trip Expenses", "expense"),
+    ("goibibo", "Trip Expenses", "expense"),
+    ("yatra", "Trip Expenses", "expense"),
+    ("redbus", "Trip Expenses", "expense"),
+]
+
+
+def seed_merchant_rules(session: Session, categories: dict[str, Category]) -> None:
+    for keyword, category_name, txn_type in MERCHANT_RULES:
+        category = categories.get(category_name)
+        if not category:
+            continue
+        _get_or_create_rule(
+            session,
+            f"Merchant: {keyword.title()} -> {category_name}",
+            description=f"Generic starter rule (not evidence-based) - counterparty contains "
+            f"'{keyword}'. Edit or delete this if your statement spells it differently.",
+            priority=40,
+            conditions=[
+                {"field": ConditionField.COUNTERPARTY.value, "operator": ConditionOperator.CONTAINS.value, "value": keyword},
+                {"field": ConditionField.DIRECTION.value, "operator": ConditionOperator.EQUALS.value, "value": "debit"},
+            ],
+            actions=[
+                {"type": RuleActionType.SET_CATEGORY.value, "value": category.id},
+                {"type": RuleActionType.SET_TRANSACTION_TYPE.value, "value": txn_type},
+            ],
+        )
