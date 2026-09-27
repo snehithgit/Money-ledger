@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ReviewInbox, Transaction } from "../api/client";
 import { formatINR } from "../lib/format";
 import TransactionEditModal from "../components/TransactionEditModal";
+import Icon from "../components/Icon";
 
 const REASON_LABELS: Record<string, string> = {
   no_rule_matched: "No rule matched",
@@ -40,7 +41,12 @@ export default function Review() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Review Inbox</h1>
+        <div className="flex items-center gap-2">
+          <span className="icon-chip bg-accent/10 text-accent">
+            <Icon name="flag" size={18} />
+          </span>
+          <h1 className="text-xl font-semibold">Review Inbox</h1>
+        </div>
         <p className="text-sm text-muted">
           {inbox ? `${inbox.total} transaction${inbox.total === 1 ? "" : "s"} need a decision.` : "Loading…"}
         </p>

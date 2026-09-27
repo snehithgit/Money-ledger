@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, Counterparty } from "../api/client";
 import { formatINR } from "../lib/format";
+import Icon from "../components/Icon";
 
 const RELATIONSHIPS = ["family", "personal_lending", "business", "bank_lender", "friend", "rental", "merchant", "other"];
 
@@ -39,7 +40,12 @@ export default function People() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-xl font-semibold">People</h1>
+        <div className="flex items-center gap-2">
+          <span className="icon-chip bg-accent/10 text-accent">
+            <Icon name="users" size={18} />
+          </span>
+          <h1 className="text-xl font-semibold">People</h1>
+        </div>
         <div className="flex gap-2">
           {mergeMode && selected.length === 2 && (
             <button className="btn-primary" onClick={doMerge}>

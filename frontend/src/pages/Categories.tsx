@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, Category } from "../api/client";
+import Icon from "../components/Icon";
 
 export default function Categories() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -25,7 +26,12 @@ export default function Categories() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Categories</h1>
+      <div className="flex items-center gap-2">
+        <span className="icon-chip bg-accent/10 text-accent">
+          <Icon name="tag" size={18} />
+        </span>
+        <h1 className="text-xl font-semibold">Categories</h1>
+      </div>
 
       <div className="card flex gap-2 flex-wrap items-end">
         <div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ImportBatch } from "../api/client";
+import Icon from "../components/Icon";
 
 export default function Imports() {
   const [imports, setImports] = useState<ImportBatch[]>([]);
@@ -35,7 +36,12 @@ export default function Imports() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Imports</h1>
+      <div className="flex items-center gap-2">
+        <span className="icon-chip bg-accent/10 text-accent">
+          <Icon name="upload" size={18} />
+        </span>
+        <h1 className="text-xl font-semibold">Imports</h1>
+      </div>
 
       <div className="card">
         <p className="label">Import a PhonePe statement (CSV)</p>

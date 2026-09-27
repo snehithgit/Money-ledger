@@ -16,6 +16,14 @@ export type TrendPoint = {
 // + end-of-line labels + tooltip are load-bearing, not decorative),
 // hairline gridlines, and a hover crosshair with an exact-value
 // tooltip instead of a number crammed onto every point.
+//
+// Rendered as a smooth ("wave") curve rather than straight segments -
+// purely a line-interpolation choice (Catmull-Rom -> cubic Bezier), so
+// none of the color/legend/label rules above change. Deliberately NOT
+// area-filled: two overlapping translucent fills for money-in/money-out
+// would obscure whichever series sits underneath, so the wave stays a
+// stroke-only line and keeps its markers and tooltip as the precise
+// read.
 export default function TrendChart({ data }: { data: TrendPoint[] }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -31,8 +39,10 @@ export default function TrendChart({ data }: { data: TrendPoint[] }) {
   const x = (i: number) => padding.left + (data.length <= 1 ? innerW / 2 : (i / (data.length - 1)) * innerW);
   const y = (v: number) => padding.top + innerH - (v / niceMax) * innerH;
 
-  const linePath = (key: "money_in" | "money_out") =>
-    data.map((d, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(d[key])}`).join(" ");
+  const smoothPath = (key: "money_in" | "money_out") => {
+    const pts = data.map((d, i) => ({ x: x(i), y: y(d[key]) }));
+    return catmullRomToBezier(pts);
+  };
 
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => niceMax * f);
 
@@ -57,8 +67,8 @@ export default function TrendChart({ data }: { data: TrendPoint[] }) {
           <line key={i} x1={padding.left} x2={width - padding.right} y1={y(v)} y2={y(v)} stroke="#e5e7eb" strokeWidth={1} />
         ))}
 
-        <path d={linePath("money_in")} fill="none" stroke="#0f9d58" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-        <path d={linePath("money_out")} fill="none" stroke="#d93025" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        <path d={smoothPath("money_in")} fill="none" stroke="#0f9d58" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        <path d={smoothPath("money_out")} fill="none" stroke="#d93025" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
         {data.map((d, i) => (
           <g key={i}>
@@ -132,4 +142,30 @@ function niceCeiling(value: number): number {
   const normalized = value / magnitude;
   const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
   return step * magnitude;
+}
+
+// Catmull-Rom spline through the given points, converted to a cubic
+// Bezier SVG path - gives a smooth "wave" without overshooting past the
+// data the way a naive spline can. Falls back to a straight segment
+// when there are fewer than 2 points.
+function catmullRomToBezier(pts: { x: number; y: number }[]): string {
+  if (pts.length === 0) return "";
+  if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
+  if (pts.length === 2) return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
+
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i === 0 ? 0 : i - 1];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2 < pts.length ? i + 2 : i + 1];
+
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
+
+    d += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`;
+  }
+  return d;
 }

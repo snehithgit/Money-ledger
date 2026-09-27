@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, CommitmentStatus, ReviewInbox } from "../api/client";
+import { api, Account, CommitmentStatus, ReviewInbox } from "../api/client";
 import { formatINR, statusColor } from "../lib/format";
 import TrendChart, { TrendPoint } from "../components/TrendChart";
 import CategoryBarChart, { CategorySpendPoint } from "../components/CategoryBarChart";
+import Icon, { IconName } from "../components/Icon";
 
 type MonthSummary = {
   year: number;
@@ -19,6 +20,7 @@ const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep
 
 export default function Dashboard() {
   const [summary, setSummary] = useState<MonthSummary | null>(null);
+  const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [commitments, setCommitments] = useState<CommitmentStatus[]>([]);
   const [inbox, setInbox] = useState<ReviewInbox | null>(null);
   const [trend, setTrend] = useState<TrendPoint[] | null>(null);
@@ -27,6 +29,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     api.get<MonthSummary>(`/reports/month-summary?year=${now.getFullYear()}&month=${now.getMonth() + 1}`).then(setSummary);
+    api.get<Account[]>("/accounts").then(setAccounts);
     api.get<CommitmentStatus[]>("/commitments").then(setCommitments);
     api.get<ReviewInbox>("/review/inbox").then(setInbox);
     api.get<MonthSummary[]>("/reports/trend?months=6").then((rows) =>
@@ -39,18 +42,65 @@ export default function Dashboard() {
   }, []);
 
   const monthLabel = now.toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const totalBalance = accounts ? accounts.filter((a) => !a.is_archived).reduce((sum, a) => sum + a.balance, 0) : null;
+
+  const quickActions: { to: string; label: string; blurb: string; icon: IconName }[] = [
+    {
+      to: "/review",
+      label: "Review Inbox",
+      icon: "flag",
+      blurb: inbox && inbox.total > 0 ? `${inbox.total} to review` : "All caught up",
+    },
+    { to: "/commitments", label: "Commitments", icon: "repeat", blurb: "This month's status" },
+    { to: "/goals", label: "Goals", icon: "target", blurb: "Track your savings" },
+    { to: "/accounts", label: "Accounts", icon: "wallet", blurb: "Balances & sources" },
+  ];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">{monthLabel}</h1>
-        <p className="text-sm text-muted">Your money, at a glance.</p>
+      <div className="hero-card">
+        <div className="relative flex items-start justify-between">
+          <div>
+            <p className="text-white/70 text-xs uppercase tracking-wide mb-1">Total balance · {monthLabel}</p>
+            <p className="text-3xl font-semibold">{totalBalance !== null ? formatINR(totalBalance) : "…"}</p>
+          </div>
+          <span className="icon-chip bg-white/20 text-white">
+            <Icon name="wallet" size={18} />
+          </span>
+        </div>
+        <div className="relative grid grid-cols-2 gap-3 mt-5">
+          <div className="rounded-2xl bg-white/15 backdrop-blur-sm p-3">
+            <div className="flex items-center gap-1.5 text-white/70 text-xs mb-1">
+              <Icon name="arrow-down-right" size={13} className="rotate-90" />
+              Money in
+            </div>
+            <p className="font-semibold">{summary ? formatINR(summary.money_in) : "…"}</p>
+          </div>
+          <div className="rounded-2xl bg-white/15 backdrop-blur-sm p-3">
+            <div className="flex items-center gap-1.5 text-white/70 text-xs mb-1">
+              <Icon name="arrow-up-right" size={13} />
+              Money out
+            </div>
+            <p className="font-semibold">{summary ? formatINR(summary.money_out) : "…"}</p>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <StatCard label="Money in" value={summary ? formatINR(summary.money_in) : "…"} tone="income" />
-        <StatCard label="Money out" value={summary ? formatINR(summary.money_out) : "…"} tone="expense" />
-        <StatCard label="Net" value={summary ? formatINR(summary.net) : "…"} tone={summary && summary.net >= 0 ? "income" : "expense"} />
+      <div>
+        <h2 className="font-semibold mb-3">Quick actions</h2>
+        <div className="grid grid-cols-2 gap-3">
+          {quickActions.map((qa) => (
+            <Link key={qa.to} to={qa.to} className="tile">
+              <span className="icon-chip bg-accent/10 text-accent">
+                <Icon name={qa.icon} size={18} />
+              </span>
+              <div>
+                <p className="font-medium text-sm">{qa.label}</p>
+                <p className="text-xs text-muted mt-0.5">{qa.blurb}</p>
+              </div>
+            </Link>
+          ))}
+        </div>
       </div>
 
       <div>
@@ -64,15 +114,15 @@ export default function Dashboard() {
             <p className="font-medium">{inbox.total} transaction{inbox.total === 1 ? "" : "s"} need review</p>
             <p className="text-sm text-muted">Unknown counterparties, rule conflicts, or unclassified payments.</p>
           </div>
-          <span className="text-accent text-sm font-medium">Review →</span>
+          <Icon name="chevron-right" size={18} className="text-accent" />
         </Link>
       )}
 
       <div>
         <div className="flex items-center justify-between mb-2">
           <h2 className="font-semibold">This month's commitments</h2>
-          <Link to="/commitments" className="text-sm text-accent">
-            View all →
+          <Link to="/commitments" className="text-sm text-accent flex items-center gap-0.5">
+            View all <Icon name="chevron-right" size={14} />
           </Link>
         </div>
         <div className="table-wrap">
@@ -140,15 +190,6 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function StatCard({ label, value, tone }: { label: string; value: string; tone: "income" | "expense" }) {
-  return (
-    <div className="card">
-      <p className="text-xs text-muted mb-1">{label}</p>
-      <p className={`text-2xl font-semibold ${tone === "income" ? "text-income" : "text-expense"}`}>{value}</p>
     </div>
   );
 }

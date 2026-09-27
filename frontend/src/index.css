@@ -56,3 +56,42 @@ table.data tr:last-child td {
 .pill {
   @apply inline-block rounded-full px-2 py-0.5 text-xs font-medium;
 }
+
+/* --- Redesign primitives: gradient hero card, quick-action tiles, ---
+   --- pill nav. Reuses the existing accent/income/expense tokens so ---
+   --- these stay one system with the rest of the app, not a bolted- ---
+   --- on second style. --- */
+
+.hero-card {
+  @apply relative overflow-hidden rounded-3xl p-5 text-white shadow-hero;
+  background: linear-gradient(135deg, #5b3df6 0%, #8b5cf6 55%, #a78bfa 100%);
+}
+
+.hero-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 85% -10%, rgba(255, 255, 255, 0.25), transparent 55%);
+  pointer-events: none;
+}
+
+.tile {
+  @apply relative flex flex-col gap-3 rounded-2xl bg-white border border-line p-4 shadow-sm transition-transform active:scale-[0.98] hover:border-accent/40 hover:shadow-md;
+}
+
+.icon-chip {
+  @apply inline-flex items-center justify-center rounded-xl w-9 h-9 shrink-0;
+}
+
+.nav-pill-bar {
+  @apply flex items-stretch gap-1 rounded-2xl bg-white border border-line shadow-lg px-2 py-2;
+}
+
+.progress-track {
+  @apply w-full h-2.5 bg-gray-100 rounded-full overflow-hidden;
+}
+
+.progress-fill-gradient {
+  @apply h-full rounded-full;
+  background: linear-gradient(90deg, #5b3df6, #8b5cf6);
+}

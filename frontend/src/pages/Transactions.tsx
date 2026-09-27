@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, Transaction } from "../api/client";
 import { formatINR } from "../lib/format";
 import TransactionEditModal from "../components/TransactionEditModal";
+import Icon from "../components/Icon";
 
 export default function Transactions() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -31,7 +32,12 @@ export default function Transactions() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-xl font-semibold">Transactions</h1>
+        <div className="flex items-center gap-2">
+          <span className="icon-chip bg-accent/10 text-accent">
+            <Icon name="list" size={18} />
+          </span>
+          <h1 className="text-xl font-semibold">Transactions</h1>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2 items-center">

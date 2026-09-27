@@ -1,5 +1,6 @@
 import { useEffect, useState, Dispatch, SetStateAction } from "react";
 import { api, Rule } from "../api/client";
+import Icon from "../components/Icon";
 
 const FIELDS = ["counterparty", "narration", "upi_id", "amount", "direction", "account", "day_of_month", "transaction_type", "bank", "reference"];
 const OPERATORS = ["equals", "contains", "range", "greater_than", "less_than"];
@@ -89,7 +90,12 @@ export default function Rules() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-xl font-semibold">Rules</h1>
+        <div className="flex items-center gap-2">
+          <span className="icon-chip bg-accent/10 text-accent">
+            <Icon name="sliders" size={18} />
+          </span>
+          <h1 className="text-xl font-semibold">Rules</h1>
+        </div>
         <div className="flex gap-2">
           <button className="btn-secondary" onClick={applyAll} disabled={applying}>
             {applying ? "Applying…" : "Re-apply all rules"}

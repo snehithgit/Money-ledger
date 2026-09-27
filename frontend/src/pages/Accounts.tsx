@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, Account } from "../api/client";
 import { formatINR } from "../lib/format";
+import Icon from "../components/Icon";
 
 const ACCOUNT_TYPES = [
   "phonepe_wallet",
@@ -41,7 +42,12 @@ export default function Accounts() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Accounts</h1>
+        <div className="flex items-center gap-2">
+          <span className="icon-chip bg-accent/10 text-accent">
+            <Icon name="wallet" size={18} />
+          </span>
+          <h1 className="text-xl font-semibold">Accounts</h1>
+        </div>
         <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
           + Add account
         </button>

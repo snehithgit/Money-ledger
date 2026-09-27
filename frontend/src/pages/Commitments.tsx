@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, CommitmentStatus } from "../api/client";
 import { formatINR, currentPeriod, statusColor } from "../lib/format";
+import Icon from "../components/Icon";
 
 export default function Commitments() {
   const [period, setPeriod] = useState(currentPeriod());
@@ -21,9 +22,14 @@ export default function Commitments() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-xl font-semibold">Commitments</h1>
-          <p className="text-sm text-muted">Recurring obligations and contributions, one period at a time.</p>
+        <div className="flex items-center gap-2">
+          <span className="icon-chip bg-accent/10 text-accent">
+            <Icon name="repeat" size={18} />
+          </span>
+          <div>
+            <h1 className="text-xl font-semibold">Commitments</h1>
+            <p className="text-sm text-muted">Recurring obligations and contributions, one period at a time.</p>
+          </div>
         </div>
         <input type="month" className="input w-auto" value={period} onChange={(e) => setPeriod(e.target.value)} />
       </div>
