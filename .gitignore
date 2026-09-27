@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Data (never commit real financial data or the SQLite DB)
+data/*.db
+backend/.venv/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
