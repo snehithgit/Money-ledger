@@ -6,7 +6,7 @@ __pycache__/
 .pytest_cache/
 
 # Data (never commit real financial data or the SQLite DB)
-data/*.db
+data/
 backend/.venv/
 
 # Node / frontend

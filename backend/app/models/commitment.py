@@ -33,6 +33,13 @@ class RecurringCommitment(SQLModel, table=True):
     allow_partial_payment: bool = True
     allow_multiple_transactions: bool = True
     manual_contributions_allowed: bool = False
+    # When true, this commitment never needs a manual "confirm" click:
+    # any past-or-current period with no recorded payment is treated as
+    # automatically fulfilled (see calculate_commitment_status) - for
+    # obligations that happen outside PhonePe on a reliable schedule
+    # (e.g. an auto-debit from someone else's account) where a manual
+    # confirmation step is just friction, not a real check.
+    auto_confirm: bool = False
     active: bool = True
     notes: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

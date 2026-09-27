@@ -156,6 +156,30 @@ def calculate_commitment_status(session: Session, commitment_id: int, period: st
     ).all()
     paid = sum(p.allocated_amount for p in payments)
 
+    # auto_confirm commitments (e.g. a spouse's contribution that's
+    # auto-debited from an account never visible in PhonePe, but always
+    # happens on schedule) skip the manual "confirm" click entirely: any
+    # past-or-current period with nothing recorded yet is written as
+    # fulfilled right here, as a real payment row (so it shows in the
+    # payments list like any other contribution), not just a display
+    # trick. Never touches future periods, and never overrides a period
+    # that already has a payment recorded against it.
+    if paid <= 0 and commitment.auto_confirm and period <= date_.today().strftime("%Y-%m"):
+        auto_payment = CommitmentPayment(
+            commitment_id=commitment_id,
+            transaction_id=None,
+            period=period,
+            allocated_amount=commitment.expected_amount,
+            source_type="manual",
+            is_manual=True,
+            manual_note="Auto-confirmed - no manual review needed for this commitment.",
+        )
+        session.add(auto_payment)
+        session.commit()
+        session.refresh(auto_payment)
+        payments = [auto_payment]
+        paid = auto_payment.allocated_amount
+
     if paid <= 0:
         status = CommitmentStatus.PENDING
     elif abs(paid - commitment.expected_amount) < 0.01:

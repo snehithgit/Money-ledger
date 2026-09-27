@@ -168,8 +168,11 @@ def seed_all(session: Session) -> None:
         allow_partial_payment=True,
         allow_multiple_transactions=False,
         manual_contributions_allowed=True,
-        notes="Auto-deducted from wife's own account - usually NOT visible in the "
-        "PhonePe statement. Confirm manually each month via 'Add manual contribution'.",
+        auto_confirm=True,
+        notes="Auto-deducted from wife's own account - never visible in the PhonePe "
+        "statement, but happens reliably every month, so it's auto-confirmed as paid "
+        "each period without needing a manual click. 'Add manual contribution' is still "
+        "there if you ever need to record a different amount for a specific month.",
     )
 
     emi = _get_or_create_commitment(

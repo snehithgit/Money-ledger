@@ -27,10 +27,12 @@ cd finance-tracker
 docker compose up -d --build
 ```
 
-Then open:
+This runs as **one container** — the FastAPI backend serves the built
+React frontend directly, so there's a single image, a single port, and
+nothing to reverse-proxy. Then open:
 
 - **App:** http://localhost:8080
-- **API docs (Swagger):** http://localhost:8000/docs
+- **API docs (Swagger):** http://localhost:8080/docs
 
 First launch automatically creates the database, the default category
 tree, default labels, four starter accounts (PhonePe, Cash, Wife's
@@ -178,7 +180,7 @@ To back it up manually right now (proper backup/restore UI is a later
 phase — see below):
 
 ```bash
-docker cp $(docker compose ps -q backend):/data ./finance-backup-$(date +%F)
+docker cp $(docker compose ps -q app):/data ./finance-backup-$(date +%F)
 ```
 
 To restore, stop the app, copy files back into the volume, and start
@@ -207,7 +209,17 @@ change later — it's additive.
 
 ## Architecture
 
+Runs as **one container**: FastAPI serves the API under `/api/*` and
+the built React app for every other path (see the catch-all route at
+the bottom of `backend/app/main.py`) - no nginx, no reverse proxy, no
+second service to keep in sync.
+
 ```
+Dockerfile             multi-stage: builds the frontend (node), then
+                        copies its output into the backend image as
+                        backend/static/ (see backend/app/main.py)
+docker-compose.yml      one service ("app"), one named volume for all data
+
 backend/   FastAPI + SQLModel + SQLite
   app/models/       one file per table (SQLModel table classes)
   app/schemas/       request/response Pydantic schemas
@@ -217,6 +229,8 @@ backend/   FastAPI + SQLModel + SQLite
                        centralized financial calculations, seed data,
                        review inbox
   app/api/            FastAPI routers (one per resource)
+  app/main.py         wires the API together + serves backend/static/
+                       (the built frontend) with an SPA fallback route
   alembic/            schema migration baseline (app self-initializes
                        its schema on first run; Alembic is here for
                        future changes)
@@ -230,9 +244,12 @@ frontend/  React + TypeScript + Vite + Tailwind
   src/components/     Layout (desktop sidebar / mobile bottom nav),
                        Quick Add modal, Transaction edit/split modal
   src/api/client.ts   thin fetch wrapper + shared types
-
-docker-compose.yml    backend + frontend, one named volume for all data
 ```
+
+During local development you can still run the frontend and backend
+separately (`npm run dev` on :5173 talking to `uvicorn app.main:app
+--reload` on :8000 via the Vite proxy) - only the production Docker
+image combines them into one container.
 
 ### Running the backend test suite
 
@@ -245,4 +262,3 @@ pytest -v
 
 (These tests run against an isolated in-memory SQLite database and
 never touch your real `/data` volume.)
-# Money-ledger

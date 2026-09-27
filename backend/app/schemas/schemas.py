@@ -194,6 +194,7 @@ class CommitmentCreate(BaseModel):
     allow_partial_payment: bool = True
     allow_multiple_transactions: bool = True
     manual_contributions_allowed: bool = False
+    auto_confirm: bool = False
     notes: Optional[str] = None
 
 
@@ -212,6 +213,7 @@ class CommitmentUpdate(BaseModel):
     allow_partial_payment: Optional[bool] = None
     allow_multiple_transactions: Optional[bool] = None
     manual_contributions_allowed: Optional[bool] = None
+    auto_confirm: Optional[bool] = None
     active: Optional[bool] = None
     notes: Optional[str] = None
 
@@ -227,6 +229,21 @@ class AttachPaymentRequest(BaseModel):
 class ManualContributionRequest(BaseModel):
     period: str
     allocated_amount: float
+    manual_note: Optional[str] = None
+
+
+class BulkCommitmentPaymentRequest(BaseModel):
+    """For a single lump-sum payment that covers several periods at once
+    (e.g. a whole financial year's Sukanya contribution paid in one
+    transfer instead of monthly). Spreads `total_amount` evenly across
+    `periods` consecutive months starting at `start_period`, so each of
+    those months shows the commitment as fulfilled instead of pending."""
+
+    transaction_id: Optional[int] = None  # null => manual, not tied to an imported transaction
+    start_period: str  # "YYYY-MM" - the first month this payment covers
+    periods: int  # how many consecutive months it covers
+    total_amount: float
+    source_type: str = "phonepe"
     manual_note: Optional[str] = None
 
 
