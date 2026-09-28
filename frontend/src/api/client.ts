@@ -120,7 +120,10 @@ export type GoalProgress = {
   target_amount: number | null;
   total_contributed: number;
   remaining: number | null;
-  by_commitment: { commitment_id: number; commitment_name: string; total: number }[];
+  by_commitment: { commitment_id: number; commitment_name: string; total: number; ytd?: number }[];
+  current_year?: number;
+  ytd_contributed?: number;
+  annual_scheduled_target?: number;
 };
 
 export type ImportBatch = {

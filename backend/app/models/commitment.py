@@ -64,4 +64,5 @@ class CommitmentPayment(SQLModel, table=True):
     source_type: str = "phonepe"  # "phonepe" | "rent" | "manual" | "other"
     is_manual: bool = False
     manual_note: Optional[str] = None
+    rule_id: Optional[int] = Field(default=None, foreign_key="rule.id", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)

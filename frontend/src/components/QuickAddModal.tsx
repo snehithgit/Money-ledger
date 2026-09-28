@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, Account, Category, Transaction } from "../api/client";
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const d = new Date();
+const TODAY = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 export default function QuickAddModal({ onClose, onCreated }: { onClose: () => void; onCreated: (id: number) => void }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -10,6 +11,7 @@ export default function QuickAddModal({ onClose, onCreated }: { onClose: () => v
   const [amount, setAmount] = useState("");
   const [accountId, setAccountId] = useState<number | "">("");
   const [categoryId, setCategoryId] = useState<number | "">("");
+  const [destinationAccountId, setDestinationAccountId] = useState<number | "">("");
   const [counterparty, setCounterparty] = useState("");
   const [date, setDate] = useState(TODAY);
   const [note, setNote] = useState("");
@@ -29,20 +31,21 @@ export default function QuickAddModal({ onClose, onCreated }: { onClose: () => v
     setSaving(true);
     setError(null);
     try {
-      const direction = kind === "income" ? "credit" : "debit";
-      const transaction_type = kind === "transfer" ? "transfer" : kind === "income" ? "income" : "expense";
-      const txn = await api.post<Transaction>("/transactions", {
-        date,
-        amount: parseFloat(amount),
-        direction,
-        account_id: accountId,
-        raw_narration: counterparty || note || "Manual entry",
-        raw_counterparty: counterparty,
-        transaction_type,
-        category_id: categoryId || null,
-        notes: note || null,
-      });
-      onCreated(txn.id);
+      if (kind === "transfer") {
+        if (!destinationAccountId) throw new Error("Destination account is required for a transfer");
+        const pair = await api.post<{source: Transaction; destination: Transaction}>("/transactions/transfer", {
+          date, amount: parseFloat(amount), source_account_id: accountId, destination_account_id: destinationAccountId, notes: note || null,
+        });
+        onCreated(pair.source.id);
+      } else {
+        const direction = kind === "income" ? "credit" : "debit";
+        const txn = await api.post<Transaction>("/transactions", {
+          date, amount: parseFloat(amount), direction, account_id: accountId,
+          raw_narration: counterparty || note || "Manual entry", raw_counterparty: counterparty,
+          transaction_type: kind, category_id: categoryId || null, notes: note || null,
+        });
+        onCreated(txn.id);
+      }
     } catch (e: any) {
       setError(e.message || "Failed to save");
     } finally {
@@ -88,6 +91,15 @@ export default function QuickAddModal({ onClose, onCreated }: { onClose: () => v
               ))}
             </select>
           </div>
+          {kind === "transfer" && (
+            <div>
+              <label className="label">Destination account</label>
+              <select className="input" value={destinationAccountId} onChange={(e) => setDestinationAccountId(Number(e.target.value))}>
+                <option value="">Select destination…</option>
+                {accounts.filter((a) => a.id !== accountId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+          )}
           {kind !== "transfer" && (
             <div>
               <label className="label">Category</label>

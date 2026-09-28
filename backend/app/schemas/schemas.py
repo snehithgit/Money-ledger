@@ -11,9 +11,10 @@ here (YAGNI applied to file layout, not just features).
 from __future__ import annotations
 
 from datetime import date as date_, datetime
-from typing import Optional
+from typing import Optional, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
+from decimal import Decimal, ROUND_HALF_UP
 
 from app.models.enums import (
     AccountType,
@@ -25,6 +26,11 @@ from app.models.enums import (
     TransactionType,
 )
 
+
+
+
+def _money(v: float) -> float:
+    return float(Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 # ---------- Accounts ----------
 class AccountCreate(BaseModel):
@@ -99,7 +105,7 @@ class AddAliasRequest(BaseModel):
 class TransactionCreate(BaseModel):
     date: date_
     time: Optional[str] = None
-    amount: float
+    amount: float = Field(gt=0)
     direction: Direction
     account_id: int
     raw_narration: str = ""
@@ -114,11 +120,15 @@ class TransactionCreate(BaseModel):
     notes: Optional[str] = None
     label_ids: list[int] = []
 
+    @field_validator("amount")
+    @classmethod
+    def cents(cls, v): return _money(v)
+
 
 class TransactionUpdate(BaseModel):
     date: Optional[date_] = None
     time: Optional[str] = None
-    amount: Optional[float] = None
+    amount: Optional[float] = Field(default=None, gt=0)
     direction: Optional[Direction] = None
     account_id: Optional[int] = None
     transaction_type: Optional[TransactionType] = None
@@ -133,14 +143,26 @@ class TransactionUpdate(BaseModel):
 
 
 class SplitCreate(BaseModel):
-    amount: float
+    amount: float = Field(gt=0)
+
+    @field_validator("amount")
+    @classmethod
+    def cents(cls, v): return _money(v)
     category_id: Optional[int] = None
     counterparty_id: Optional[int] = None
     notes: Optional[str] = None
 
 
 class SplitTransactionRequest(BaseModel):
-    splits: list[SplitCreate]
+    splits: list[SplitCreate] = Field(min_length=2)
+
+
+class TransferCreate(BaseModel):
+    date: date_
+    amount: float = Field(gt=0)
+    source_account_id: int
+    destination_account_id: int
+    notes: Optional[str] = None
 
 
 # ---------- Rules ----------
@@ -149,17 +171,46 @@ class RuleCondition(BaseModel):
     operator: str
     value: str | float | list
 
+    @field_validator("field")
+    @classmethod
+    def valid_field(cls, v):
+        from app.models.enums import ConditionField
+        if v not in {x.value for x in ConditionField}: raise ValueError("unsupported rule field")
+        return v
+
+    @field_validator("operator")
+    @classmethod
+    def valid_operator(cls, v):
+        from app.models.enums import ConditionOperator
+        if v not in {x.value for x in ConditionOperator}: raise ValueError("unsupported rule operator")
+        return v
+
+    @model_validator(mode="after")
+    def valid_value(self):
+        if self.operator == "contains" and (not isinstance(self.value, str) or not self.value.strip()):
+            raise ValueError("contains requires a non-empty string")
+        if self.operator == "range" and (not isinstance(self.value, list) or len(self.value) != 2):
+            raise ValueError("range requires exactly two values")
+        return self
+
 
 class RuleAction(BaseModel):
     type: str
     value: Optional[str | float] = None
 
+    @field_validator("type")
+    @classmethod
+    def valid_type(cls, v):
+        from app.models.enums import RuleActionType
+        if v not in {x.value for x in RuleActionType}: raise ValueError("unsupported rule action")
+        return v
+
 
 class RuleCreate(BaseModel):
     name: str
     description: Optional[str] = None
-    conditions: list[RuleCondition]
-    actions: list[RuleAction]
+    conditions: list[RuleCondition] = Field(min_length=1)
+    actions: list[RuleAction] = Field(min_length=1)
     priority: int = 100
     is_active: bool = True
 
@@ -172,19 +223,31 @@ class RuleUpdate(BaseModel):
     priority: Optional[int] = None
     is_active: Optional[bool] = None
 
+    @field_validator("conditions")
+    @classmethod
+    def nonempty_conditions(cls, v):
+        if v is not None and not v: raise ValueError("conditions cannot be empty")
+        return v
+
+    @field_validator("actions")
+    @classmethod
+    def nonempty_actions(cls, v):
+        if v is not None and not v: raise ValueError("actions cannot be empty")
+        return v
+
 
 class RuleTestRequest(BaseModel):
-    conditions: list[RuleCondition]
-    limit: int = 50
+    conditions: list[RuleCondition] = Field(min_length=1)
+    limit: int = Field(default=50, ge=1, le=500)
 
 
 # ---------- Commitments ----------
 class CommitmentCreate(BaseModel):
     name: str
     group_name: Optional[str] = None
-    expected_amount: float
+    expected_amount: float = Field(gt=0)
     frequency: Frequency = Frequency.MONTHLY
-    due_day: Optional[int] = None
+    due_day: Optional[int] = Field(default=None, ge=1, le=31)
     start_date: Optional[date_] = None
     end_date: Optional[date_] = None
     category_id: Optional[int] = None
@@ -203,7 +266,7 @@ class CommitmentUpdate(BaseModel):
     group_name: Optional[str] = None
     expected_amount: Optional[float] = None
     frequency: Optional[Frequency] = None
-    due_day: Optional[int] = None
+    due_day: Optional[int] = Field(default=None, ge=1, le=31)
     start_date: Optional[date_] = None
     end_date: Optional[date_] = None
     category_id: Optional[int] = None
@@ -220,15 +283,15 @@ class CommitmentUpdate(BaseModel):
 
 class AttachPaymentRequest(BaseModel):
     transaction_id: Optional[int] = None  # null => manual
-    period: str  # "YYYY-MM"
-    allocated_amount: float
-    source_type: str = "phonepe"
+    period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    allocated_amount: float = Field(gt=0)
+    source_type: Literal["phonepe", "rent", "manual", "other"] = "phonepe"
     manual_note: Optional[str] = None
 
 
 class ManualContributionRequest(BaseModel):
-    period: str
-    allocated_amount: float
+    period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    allocated_amount: float = Field(gt=0)
     manual_note: Optional[str] = None
 
 
@@ -240,10 +303,10 @@ class BulkCommitmentPaymentRequest(BaseModel):
     those months shows the commitment as fulfilled instead of pending."""
 
     transaction_id: Optional[int] = None  # null => manual, not tied to an imported transaction
-    start_period: str  # "YYYY-MM" - the first month this payment covers
-    periods: int  # how many consecutive months it covers
-    total_amount: float
-    source_type: str = "phonepe"
+    start_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")  # first month
+    periods: int = Field(ge=1, le=120)  # how many consecutive months it covers
+    total_amount: float = Field(gt=0)
+    source_type: Literal["phonepe", "rent", "manual", "other"] = "phonepe"
     manual_note: Optional[str] = None
 
 
@@ -277,7 +340,7 @@ class GoalUpdate(BaseModel):
 
 
 class GoalContributionCreate(BaseModel):
-    amount: float
+    amount: float = Field(gt=0)
     date: date_
     transaction_id: Optional[int] = None
     manual_note: Optional[str] = None
