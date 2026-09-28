@@ -35,9 +35,6 @@ export default function Goals() {
                 <div className="progress-fill-gradient" style={{ width: `${pct}%` }} />
               </div>
             )}
-            {g.ytd_contributed !== undefined && (
-              <p className="text-xs text-muted mb-2">{g.current_year} YTD: {formatINR(g.ytd_contributed)}{g.annual_scheduled_target ? ` / ${formatINR(g.annual_scheduled_target)} scheduled` : ""}</p>
-            )}
             <div className="text-xs text-muted space-y-1">
               {g.by_commitment.map((b) => (
                 <div key={b.commitment_id} className="flex justify-between">

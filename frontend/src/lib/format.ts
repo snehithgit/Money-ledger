@@ -1,6 +1,6 @@
 export function formatINR(amount: number): string {
   const sign = amount < 0 ? "-" : "";
-  return `${sign}₹${Math.abs(amount).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${sign}₹${Math.abs(amount).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 }
 
 export function currentPeriod(): string {

@@ -34,12 +34,10 @@ export default function Dashboard() {
     api.get<ReviewInbox>("/review/inbox").then(setInbox);
     api.get<MonthSummary[]>("/reports/trend?months=6").then((rows) =>
       setTrend(rows.map((r) => ({ label: `${MONTH_ABBR[r.month - 1]} ${r.year}`, money_in: r.money_in, money_out: r.money_out })))
-    ).catch(() => setTrend([]));
-    const localDate = (y: number, m: number, d: number) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    const monthStart = localDate(now.getFullYear(), now.getMonth() + 1, 1);
-    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    const monthEnd = localDate(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 1);
-    api.get<CategorySpendPoint[]>(`/reports/category-spend?start=${monthStart}&end=${monthEnd}`).then(setCategorySpend).catch(() => setCategorySpend([]));
+    );
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString().slice(0, 10);
+    api.get<CategorySpendPoint[]>(`/reports/category-spend?start=${monthStart}&end=${monthEnd}`).then(setCategorySpend);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

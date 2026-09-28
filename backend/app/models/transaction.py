@@ -53,7 +53,6 @@ class Transaction(SQLModel, table=True):
     review_reason: Optional[str] = None
     matched_rule_id: Optional[int] = Field(default=None, foreign_key="rule.id")
     match_explanation: Optional[str] = None  # human-readable "why" for auto-classification
-    classification_source: str = "unclassified"  # unclassified | rule | manual
     is_ignored: bool = False  # e.g. wallet cashback dust the user chooses to hide
 
     created_at: datetime = Field(default_factory=datetime.utcnow)

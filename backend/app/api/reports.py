@@ -24,15 +24,3 @@ def month_summary(year: int, month: int, session: Session = Depends(get_session)
 @router.get("/category-spend")
 def category_spend(start: date_, end: date_, session: Session = Depends(get_session)):
     return calculate_category_spend(session, start, end)
-
-
-@router.get("/trend")
-def trend(months: int = 6, session: Session = Depends(get_session)):
-    months = max(1, min(months, 60))
-    today = date_.today()
-    rows = []
-    for offset in range(months - 1, -1, -1):
-        total = today.year * 12 + (today.month - 1) - offset
-        year, month0 = divmod(total, 12)
-        rows.append(calculate_month_summary(session, year, month0 + 1))
-    return rows

@@ -37,16 +37,13 @@ def get_or_create_phonepe_account(session: Session) -> Account:
 
 def import_phonepe_csv(session: Session, upload_path: str, original_filename: str, account_id: int | None = None) -> ImportBatch:
     account = session.get(Account, account_id) if account_id else get_or_create_phonepe_account(session)
-    if account is None:
-        raise ValueError("account not found")
 
-    safe_name = Path(original_filename).name
-    archive_path = settings.raw_imports_dir / safe_name
+    archive_path = settings.raw_imports_dir / f"{original_filename}"
     # never overwrite a previous archive of the same filename
     counter = 1
     while archive_path.exists():
-        stem = Path(safe_name).stem
-        suffix = Path(safe_name).suffix
+        stem = Path(original_filename).stem
+        suffix = Path(original_filename).suffix
         archive_path = settings.raw_imports_dir / f"{stem}__{counter}{suffix}"
         counter += 1
     shutil.copyfile(upload_path, archive_path)
@@ -72,12 +69,9 @@ def import_phonepe_csv(session: Session, upload_path: str, original_filename: st
     failed_count = len(result.failed_lines)
     review_count = 0
 
-    existing_fingerprints: set[str] = set(session.exec(select(Transaction.fingerprint)).all())
-    existing_phonepe_refs: dict[str, str] = {
-        ref: fp for ref, fp in session.exec(
-            select(Transaction.reference, Transaction.fingerprint).where(Transaction.source == "phonepe_csv")
-        ).all()
-    }
+    existing_fingerprints: set[str] = set(
+        session.exec(select(Transaction.fingerprint)).all()
+    )
 
     for row in result.rows:
         txn = normalize_phonepe_row(
@@ -86,11 +80,6 @@ def import_phonepe_csv(session: Session, upload_path: str, original_filename: st
 
         if txn.fingerprint in existing_fingerprints:
             dup_count += 1
-            continue
-        if txn.reference in existing_phonepe_refs and existing_phonepe_refs[txn.reference] != txn.fingerprint:
-            # A stable PhonePe transaction ID appearing with different facts is
-            # a source conflict, not a new transaction. Preserve the old row.
-            failed_count += 1
             continue
 
         txn.counterparty_id = resolve_counterparty(session, txn.raw_counterparty).id
@@ -102,7 +91,6 @@ def import_phonepe_csv(session: Session, upload_path: str, original_filename: st
         session.add(txn)
 
         existing_fingerprints.add(txn.fingerprint)
-        existing_phonepe_refs[txn.reference] = txn.fingerprint
         new_count += 1
         if txn.needs_review:
             review_count += 1
