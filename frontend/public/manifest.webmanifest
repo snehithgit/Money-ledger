@@ -1,9 +1,9 @@
 {
-  "name": "Finance Tracker",
-  "short_name": "Finance",
+  "name": "Money Ledger",
+  "short_name": "Ledger",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#12161c",
+  "background_color": "#f6f7fb",
+  "theme_color": "#4F46E5",
   "icons": []
 }

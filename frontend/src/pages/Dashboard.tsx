@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Account, CommitmentStatus, ReviewInbox } from "../api/client";
 import { formatINR, statusColor } from "../lib/format";
 import TrendChart, { TrendPoint } from "../components/TrendChart";
 import CategoryBarChart, { CategorySpendPoint } from "../components/CategoryBarChart";
 import Icon, { IconName } from "../components/Icon";
+import { EmptyState, MetricCard, Notice, PageHeader, SectionHeader, SkeletonRows } from "../components/UI";
 
 type MonthSummary = {
   year: number;
@@ -21,176 +22,148 @@ const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep
 export default function Dashboard() {
   const [summary, setSummary] = useState<MonthSummary | null>(null);
   const [accounts, setAccounts] = useState<Account[] | null>(null);
-  const [commitments, setCommitments] = useState<CommitmentStatus[]>([]);
+  const [commitments, setCommitments] = useState<CommitmentStatus[] | null>(null);
   const [inbox, setInbox] = useState<ReviewInbox | null>(null);
   const [trend, setTrend] = useState<TrendPoint[] | null>(null);
   const [categorySpend, setCategorySpend] = useState<CategorySpendPoint[] | null>(null);
-  const now = new Date();
+  const now = useMemo(() => new Date(), []);
 
   useEffect(() => {
-    api.get<MonthSummary>(`/reports/month-summary?year=${now.getFullYear()}&month=${now.getMonth() + 1}`).then(setSummary);
-    api.get<Account[]>("/accounts").then(setAccounts);
-    api.get<CommitmentStatus[]>("/commitments").then(setCommitments);
-    api.get<ReviewInbox>("/review/inbox").then(setInbox);
-    api.get<MonthSummary[]>("/reports/trend?months=6").then((rows) =>
-      setTrend(rows.map((r) => ({ label: `${MONTH_ABBR[r.month - 1]} ${r.year}`, money_in: r.money_in, money_out: r.money_out })))
-    ).catch(() => setTrend([]));
+    api.get<MonthSummary>(`/reports/month-summary?year=${now.getFullYear()}&month=${now.getMonth() + 1}`).then(setSummary).catch(() => setSummary(null));
+    api.get<Account[]>("/accounts").then(setAccounts).catch(() => setAccounts([]));
+    api.get<CommitmentStatus[]>("/commitments").then(setCommitments).catch(() => setCommitments([]));
+    api.get<ReviewInbox>("/review/inbox").then(setInbox).catch(() => setInbox({ total: 0, groups: [] }));
+    api.get<MonthSummary[]>("/reports/trend?months=6")
+      .then((rows) => setTrend(rows.map((r) => ({ label: `${MONTH_ABBR[r.month - 1]} ${r.year}`, money_in: r.money_in, money_out: r.money_out }))))
+      .catch(() => setTrend([]));
+
     const localDate = (y: number, m: number, d: number) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     const monthStart = localDate(now.getFullYear(), now.getMonth() + 1, 1);
     const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     const monthEnd = localDate(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 1);
     api.get<CategorySpendPoint[]>(`/reports/category-spend?start=${monthStart}&end=${monthEnd}`).then(setCategorySpend).catch(() => setCategorySpend([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [now]);
 
   const monthLabel = now.toLocaleString("en-IN", { month: "long", year: "numeric" });
-  const totalBalance = accounts ? accounts.filter((a) => !a.is_archived).reduce((sum, a) => sum + a.balance, 0) : null;
+  const totalBalance = accounts?.filter((a) => !a.is_archived).reduce((sum, a) => sum + a.balance, 0) ?? null;
+  const completedCommitments = commitments?.filter((c) => c.status === "completed" || c.status === "overpaid").length ?? 0;
+  const activeCommitments = commitments?.length ?? 0;
 
-  const quickActions: { to: string; label: string; blurb: string; icon: IconName }[] = [
-    {
-      to: "/review",
-      label: "Review Inbox",
-      icon: "flag",
-      blurb: inbox && inbox.total > 0 ? `${inbox.total} to review` : "All caught up",
-    },
-    { to: "/commitments", label: "Commitments", icon: "repeat", blurb: "This month's status" },
-    { to: "/goals", label: "Goals", icon: "target", blurb: "Track your savings" },
-    { to: "/accounts", label: "Accounts", icon: "wallet", blurb: "Balances & sources" },
+  const quickLinks: { to: string; label: string; blurb: string; icon: IconName }[] = [
+    { to: "/review", label: "Review inbox", blurb: inbox?.total ? `${inbox.total} item${inbox.total === 1 ? "" : "s"} waiting` : "Nothing waiting", icon: "flag" },
+    { to: "/accounts", label: "Accounts", blurb: accounts ? `${accounts.length} active account${accounts.length === 1 ? "" : "s"}` : "Balances and sources", icon: "wallet" },
+    { to: "/goals", label: "Goals", blurb: "Savings progress", icon: "target" },
+    { to: "/imports", label: "Import statement", blurb: "Add PhonePe CSV", icon: "upload" },
   ];
 
   return (
-    <div className="space-y-6">
-      <div className="hero-card">
-        <div className="relative flex items-start justify-between">
-          <div>
-            <p className="text-white/70 text-xs uppercase tracking-wide mb-1">Total balance · {monthLabel}</p>
-            <p className="text-3xl font-semibold">{totalBalance !== null ? formatINR(totalBalance) : "…"}</p>
-          </div>
-          <span className="icon-chip bg-white/20 text-white">
-            <Icon name="wallet" size={18} />
-          </span>
-        </div>
-        <div className="relative grid grid-cols-2 gap-3 mt-5">
-          <div className="rounded-2xl bg-white/15 backdrop-blur-sm p-3">
-            <div className="flex items-center gap-1.5 text-white/70 text-xs mb-1">
-              <Icon name="arrow-down-right" size={13} className="rotate-90" />
-              Money in
-            </div>
-            <p className="font-semibold">{summary ? formatINR(summary.money_in) : "…"}</p>
-          </div>
-          <div className="rounded-2xl bg-white/15 backdrop-blur-sm p-3">
-            <div className="flex items-center gap-1.5 text-white/70 text-xs mb-1">
-              <Icon name="arrow-up-right" size={13} />
-              Money out
-            </div>
-            <p className="font-semibold">{summary ? formatINR(summary.money_out) : "…"}</p>
-          </div>
-        </div>
-      </div>
+    <div className="page-stack">
+      <PageHeader icon="home" title="Overview" description={`A clear view of your money for ${monthLabel}.`} />
 
-      <div>
-        <h2 className="font-semibold mb-3">Quick actions</h2>
-        <div className="grid grid-cols-2 gap-3">
-          {quickActions.map((qa) => (
-            <Link key={qa.to} to={qa.to} className="tile">
-              <span className="icon-chip bg-accent/10 text-accent">
-                <Icon name={qa.icon} size={18} />
-              </span>
-              <div>
-                <p className="font-medium text-sm">{qa.label}</p>
-                <p className="text-xs text-muted mt-0.5">{qa.blurb}</p>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <h2 className="font-semibold mb-2">Cash flow, last 6 months</h2>
-        <div className="card">{trend ? <TrendChart data={trend} /> : <p className="text-sm text-muted">Loading…</p>}</div>
+      <div className="metric-grid">
+        <MetricCard label="Total balance" value={totalBalance === null ? "…" : formatINR(totalBalance)} helper={accounts ? `${accounts.length} active account${accounts.length === 1 ? "" : "s"}` : "Loading accounts"} icon="wallet" tone="accent" />
+        <MetricCard label="Money in" value={summary ? formatINR(summary.money_in) : "…"} helper="This month" icon="arrow-down-right" tone="income" />
+        <MetricCard label="Money out" value={summary ? formatINR(summary.money_out) : "…"} helper="This month" icon="arrow-up-right" tone="expense" />
+        <MetricCard label="Net cash flow" value={summary ? formatINR(summary.net) : "…"} helper={summary ? (summary.net >= 0 ? "More came in than went out" : "Outflow is higher this month") : "This month"} icon="chart" />
       </div>
 
       {inbox && inbox.total > 0 && (
-        <Link to="/review" className="card flex items-center justify-between hover:border-accent block">
-          <div>
-            <p className="font-medium">{inbox.total} transaction{inbox.total === 1 ? "" : "s"} need review</p>
-            <p className="text-sm text-muted">Unknown counterparties, rule conflicts, or unclassified payments.</p>
-          </div>
-          <Icon name="chevron-right" size={18} className="text-accent" />
-        </Link>
+        <Notice
+          tone="warning"
+          title={`${inbox.total} transaction${inbox.total === 1 ? "" : "s"} need review`}
+          action={<Link to="/review" className="btn-secondary bg-white">Review now <Icon name="chevron-right" size={15} /></Link>}
+        >
+          Clear unknown payees, rule conflicts, and unclassified transactions so your reports stay accurate.
+        </Notice>
       )}
 
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="font-semibold">This month's commitments</h2>
-          <Link to="/commitments" className="text-sm text-accent flex items-center gap-0.5">
-            View all <Icon name="chevron-right" size={14} />
-          </Link>
-        </div>
-        <div className="table-wrap">
-          <table className="data">
-            <thead>
-              <tr>
-                <th>Commitment</th>
-                <th>Expected</th>
-                <th>Paid</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {commitments.map((c) => (
-                <tr key={c.commitment_id}>
-                  <td>
-                    <div className="font-medium">{c.name}</div>
-                    {c.group_name && <div className="text-xs text-muted">{c.group_name}</div>}
-                  </td>
-                  <td>{formatINR(c.expected_amount)}</td>
-                  <td>{formatINR(c.paid_amount)}</td>
-                  <td>
-                    <span className={`pill ${statusColor(c.status)}`}>{c.status.replace("_", " ")}</span>
-                  </td>
-                </tr>
-              ))}
-              {commitments.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="text-center text-muted py-6">
-                    No active commitments yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)] gap-5">
+        <section className="panel-pad min-w-0">
+          <SectionHeader title="Cash flow" description="Income and outflow over the last six months." />
+          {trend === null ? <SkeletonRows count={3} /> : trend.length > 0 ? <TrendChart data={trend} /> : <EmptyState icon="chart" title="No cash-flow history yet" description="Import or add transactions to build a trend." />}
+        </section>
+
+        <section className="panel-pad min-w-0">
+          <SectionHeader title="Top spending" description="Largest expense categories this month." action={<Link to="/transactions" className="text-sm font-medium text-accent">Transactions</Link>} />
+          {categorySpend === null ? <SkeletonRows count={4} /> : categorySpend.length > 0 ? <CategoryBarChart data={categorySpend} /> : <EmptyState icon="tag" title="No spending yet" description="Expense categories will appear here as transactions are classified." />}
+        </section>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4">
-        <div>
-          <h2 className="font-semibold mb-2">Top spending categories this month</h2>
-          <div className="card">
-            {categorySpend ? <CategoryBarChart data={categorySpend} /> : <p className="text-sm text-muted">Loading…</p>}
+      <section>
+        <SectionHeader
+          title="Commitments this month"
+          description={`${completedCommitments} of ${activeCommitments} currently completed.`}
+          action={<Link to="/commitments" className="btn-secondary !py-2">View calendar <Icon name="chevron-right" size={15} /></Link>}
+        />
+        {commitments === null ? (
+          <SkeletonRows count={3} />
+        ) : commitments.length === 0 ? (
+          <EmptyState icon="repeat" title="No commitments yet" description="Recurring EMIs, loan payments, and savings contributions will appear here." />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {commitments.map((commitment) => {
+              const pct = commitment.expected_amount > 0 ? Math.min(100, (commitment.paid_amount / commitment.expected_amount) * 100) : 0;
+              return (
+                <Link key={commitment.commitment_id} to="/commitments" className="card hover:border-accent/40 transition-colors">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{commitment.name}</p>
+                      <p className="text-xs text-muted mt-0.5 truncate">{commitment.group_name || "Recurring commitment"}</p>
+                    </div>
+                    <span className={`pill shrink-0 ${statusColor(commitment.status)}`}>{commitment.status.replace(/_/g, " ")}</span>
+                  </div>
+                  <div className="mt-4 flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-muted">Paid</p>
+                      <p className="font-semibold mt-0.5">{formatINR(commitment.paid_amount)}</p>
+                    </div>
+                    <p className="text-xs text-muted">of {formatINR(commitment.expected_amount)}</p>
+                  </div>
+                  <div className="progress-track mt-2"><div className="progress-fill-gradient" style={{ width: `${pct}%` }} /></div>
+                </Link>
+              );
+            })}
           </div>
-        </div>
+        )}
+      </section>
 
-        <div>
-          <h2 className="font-semibold mb-2">Spending by type this month</h2>
-          <div className="card space-y-2">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(280px,0.55fr)] gap-5">
+        <section>
+          <SectionHeader title="Spending by type" description="Where this month's outflow is going." />
+          <div className="panel-pad">
             {summary && Object.keys(summary.by_out_type).length > 0 ? (
-              Object.entries(summary.by_out_type).map(([type, amount]) => (
-                <div key={type} className="flex items-center justify-between text-sm">
-                  <span className="capitalize text-muted">{type.replace("_", " ")}</span>
-                  <span className="font-medium">{formatINR(amount)}</span>
-                </div>
-              ))
+              <div className="divide-y divide-line">
+                {Object.entries(summary.by_out_type).sort((a, b) => b[1] - a[1]).map(([type, amount]) => (
+                  <div key={type} className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                    <span className="text-sm capitalize text-muted">{type.replace(/_/g, " ")}</span>
+                    <span className="text-sm font-semibold">{formatINR(amount)}</span>
+                  </div>
+                ))}
+                {summary.unclassified_count > 0 && (
+                  <div className="pt-3 text-xs text-amber-800">{summary.unclassified_count} unclassified transaction{summary.unclassified_count === 1 ? "" : "s"} are excluded from these totals.</div>
+                )}
+              </div>
             ) : (
-              <p className="text-sm text-muted">Nothing recorded yet this month.</p>
-            )}
-            {summary && summary.unclassified_count > 0 && (
-              <p className="text-xs text-amber-700 pt-2 border-t border-line">
-                {summary.unclassified_count} transaction(s) this month are still unclassified and excluded from these totals.
-              </p>
+              <EmptyState icon="chart" title="No outflow recorded" description="This section fills automatically from classified expenses and payments." />
             )}
           </div>
-        </div>
+        </section>
+
+        <section>
+          <SectionHeader title="Shortcuts" description="Common places you may want next." />
+          <div className="panel p-2">
+            {quickLinks.map((item) => (
+              <Link key={item.to} to={item.to} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 transition-colors">
+                <span className="icon-chip bg-gray-100 text-muted"><Icon name={item.icon} size={17} /></span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{item.label}</p>
+                  <p className="text-xs text-muted truncate">{item.blurb}</p>
+                </div>
+                <Icon name="chevron-right" size={15} className="text-gray-400" />
+              </Link>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   );

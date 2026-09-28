@@ -21,7 +21,13 @@ export type IconName =
   | "bell"
   | "chevron-right"
   | "arrow-up-right"
-  | "arrow-down-right";
+  | "arrow-down-right"
+  | "chevron-left"
+  | "x"
+  | "search"
+  | "check"
+  | "calendar"
+  | "file";
 
 export default function Icon({ name, size = 20, className = "" }: { name: IconName; size?: number; className?: string }) {
   const common = {
@@ -159,6 +165,46 @@ export default function Icon({ name, size = 20, className = "" }: { name: IconNa
       return (
         <svg {...common}>
           <path d="M7 7l10 10M17 8v9H8" />
+        </svg>
+      );
+
+    case "chevron-left":
+      return (
+        <svg {...common}>
+          <path d="M15 5l-7 7 7 7" />
+        </svg>
+      );
+    case "x":
+      return (
+        <svg {...common}>
+          <path d="M6 6l12 12M18 6 6 18" />
+        </svg>
+      );
+    case "search":
+      return (
+        <svg {...common}>
+          <circle cx="11" cy="11" r="6.5" />
+          <path d="m16 16 4.5 4.5" />
+        </svg>
+      );
+    case "check":
+      return (
+        <svg {...common}>
+          <path d="m5 12 4 4L19 6" />
+        </svg>
+      );
+    case "calendar":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="15" rx="2" />
+          <path d="M8 3v4M16 3v4M3.5 9.5h17" />
+        </svg>
+      );
+    case "file":
+      return (
+        <svg {...common}>
+          <path d="M6 3h8l4 4v14H6z" />
+          <path d="M14 3v5h5M9 13h6M9 17h6" />
         </svg>
       );
     default:

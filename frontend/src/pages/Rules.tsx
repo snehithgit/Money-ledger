@@ -1,12 +1,13 @@
-import { useEffect, useState, Dispatch, SetStateAction } from "react";
-import { api, Rule } from "../api/client";
+import { Dispatch, SetStateAction, useEffect, useMemo, useState } from "react";
+import { Account, api, Category, CommitmentStatus, Counterparty, GoalProgress, Label, Rule } from "../api/client";
 import Icon from "../components/Icon";
+import { EmptyState, Notice, PageHeader, SectionHeader, SkeletonRows } from "../components/UI";
 
 const FIELDS = ["counterparty", "narration", "upi_id", "amount", "direction", "account", "day_of_month", "transaction_type", "bank", "reference"];
-const OPERATORS = ["equals", "contains", "range", "greater_than", "less_than"];
 const ACTION_TYPES = [
   "set_category",
   "set_subcategory",
+  "set_label",
   "set_person",
   "set_account",
   "set_transaction_type",
@@ -18,201 +19,380 @@ const ACTION_TYPES = [
   "ignore",
   "needs_review",
 ];
+const TRANSACTION_TYPES = ["income", "expense", "transfer", "loan_payment", "emi", "savings", "investment", "family_contribution", "refund", "cash_withdrawal", "cash_deposit", "internal_transfer", "unknown_needs_review"];
+const NO_VALUE_ACTIONS = new Set(["mark_transfer", "mark_income", "mark_expense", "ignore", "needs_review"]);
 
 type ConditionRow = { field: string; operator: string; value: string };
 type ActionRow = { type: string; value: string };
+type RuleResources = { accounts: Account[]; categories: Category[]; people: Counterparty[]; commitments: CommitmentStatus[]; goals: GoalProgress[]; labels: Label[] };
+
+const EMPTY_RESOURCES: RuleResources = { accounts: [], categories: [], people: [], commitments: [], goals: [], labels: [] };
 
 export default function Rules() {
-  const [rules, setRules] = useState<Rule[]>([]);
+  const [rules, setRules] = useState<Rule[] | null>(null);
+  const [resources, setResources] = useState<RuleResources>(EMPTY_RESOURCES);
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState(100);
   const [conditions, setConditions] = useState<ConditionRow[]>([{ field: "counterparty", operator: "contains", value: "" }]);
   const [actions, setActions] = useState<ActionRow[]>([{ type: "set_transaction_type", value: "expense" }]);
-  const [testResult, setTestResult] = useState<{ matched_count: number } | null>(null);
+  const [testResult, setTestResult] = useState<{ matched_count: number; explanation?: string } | null>(null);
   const [applying, setApplying] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
-    setRules(await api.get<Rule[]>("/rules"));
+    const [ruleRows, accounts, categories, people, commitments, goals, labels] = await Promise.all([
+      api.get<Rule[]>("/rules"),
+      api.get<Account[]>("/accounts").catch(() => []),
+      api.get<Category[]>("/categories").catch(() => []),
+      api.get<Counterparty[]>("/counterparties").catch(() => []),
+      api.get<CommitmentStatus[]>("/commitments").catch(() => []),
+      api.get<GoalProgress[]>("/goals").catch(() => []),
+      api.get<Label[]>("/labels").catch(() => []),
+    ]);
+    setRules(ruleRows);
+    setResources({ accounts, categories, people, commitments, goals, labels });
   }
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load().catch(() => setRules([])); }, []);
 
-  function parseValue(v: string): string | number | number[] {
-    if (v.includes(",")) return v.split(",").map((x) => parseFloat(x.trim()));
-    const asNum = Number(v);
-    return v.trim() !== "" && !Number.isNaN(asNum) ? asNum : v;
+  function parseConditionValue(condition: ConditionRow): string | number | number[] {
+    if (condition.operator === "range") return condition.value.split(",").map((part) => Number(part.trim()));
+    if (["amount", "day_of_month", "account"].includes(condition.field)) return Number(condition.value);
+    return condition.value;
+  }
+
+  function parseActionValue(action: ActionRow): string | number | null {
+    if (NO_VALUE_ACTIONS.has(action.type)) return null;
+    if (["set_category", "set_subcategory", "set_label", "set_person", "set_account", "attach_commitment", "attach_goal"].includes(action.type)) {
+      return Number(action.value);
+    }
+    return action.value;
+  }
+
+  function validateRows(): string | null {
+    for (const condition of conditions) {
+      if (!condition.value.trim()) return `Enter a value for ${titleCase(condition.field)}.`;
+      if (condition.operator === "range") {
+        const parts = condition.value.split(",").map((part) => part.trim());
+        if (parts.length !== 2 || parts.some((part) => part === "" || Number.isNaN(Number(part)))) return "Range conditions need two numbers, for example: 1000, 5000.";
+      }
+      if (["amount", "day_of_month", "account"].includes(condition.field) && condition.operator !== "range" && Number.isNaN(Number(condition.value))) return `${titleCase(condition.field)} needs a numeric value.`;
+    }
+    for (const action of actions) {
+      if (!NO_VALUE_ACTIONS.has(action.type) && !action.value.trim()) return `Choose a value for ${actionLabel(action.type)}.`;
+    }
+    return null;
   }
 
   async function testRule() {
-    setTestResult(
-      await api.post<{ matched_count: number }>("/rules/test", {
-        conditions: conditions.map((c) => ({ ...c, value: parseValue(c.value) })),
-        limit: 5,
-      })
-    );
-  }
-
-  async function createRule() {
     setError(null);
+    const validationError = validateRows();
+    if (validationError) { setError(validationError); return; }
     try {
-      await api.post("/rules", {
-        name,
-        conditions: conditions.map((c) => ({ ...c, value: parseValue(c.value) })),
-        actions: actions.map((a) => ({ type: a.type, value: a.value ? parseValue(a.value) : null })),
-      });
-      setName("");
-      setShowForm(false);
-      setTestResult(null);
-      load();
+      setTestResult(await api.post<{ matched_count: number; explanation?: string }>("/rules/test", {
+        conditions: conditions.map((condition) => ({ ...condition, value: parseConditionValue(condition) })),
+        limit: 5,
+      }));
     } catch (e: any) {
-      setError(e.message);
+      setError(e.message || "Could not test this rule.");
     }
   }
 
-  async function deleteRule(id: number) {
-    await api.del(`/rules/${id}`);
-    load();
+  async function createRule() {
+    if (!name.trim()) {
+      setError("Give the rule a clear name.");
+      return;
+    }
+    const validationError = validateRows();
+    if (validationError) { setError(validationError); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      await api.post("/rules", {
+        name: name.trim(),
+        description: description.trim() || null,
+        priority,
+        conditions: conditions.map((condition) => ({ ...condition, value: parseConditionValue(condition) })),
+        actions: actions.map((action) => ({ type: action.type, value: parseActionValue(action) })),
+      });
+      resetForm();
+      setShowForm(false);
+      await load();
+    } catch (e: any) {
+      setError(e.message || "Could not save the rule.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleRule(rule: Rule) {
+    await api.patch(`/rules/${rule.id}`, { is_active: !rule.is_active });
+    await load();
+  }
+
+  async function deleteRule(rule: Rule) {
+    if (!window.confirm(`Delete rule “${rule.name}”? Existing transaction records are preserved.`)) return;
+    await api.del(`/rules/${rule.id}`);
+    await load();
   }
 
   async function applyAll() {
+    if (!window.confirm("Re-run active rules against existing non-ignored transactions? Manual classifications are preserved.")) return;
     setApplying(true);
     try {
       await api.post("/rules/apply-all");
-      load();
+      await load();
     } finally {
       setApplying(false);
     }
   }
 
+  function resetForm() {
+    setName("");
+    setDescription("");
+    setPriority(100);
+    setConditions([{ field: "counterparty", operator: "contains", value: "" }]);
+    setActions([{ type: "set_transaction_type", value: "expense" }]);
+    setTestResult(null);
+    setError(null);
+  }
+
+  const activeCount = useMemo(() => rules?.filter((rule) => rule.is_active).length || 0, [rules]);
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <span className="icon-chip bg-accent/10 text-accent">
-            <Icon name="sliders" size={18} />
-          </span>
-          <h1 className="text-xl font-semibold">Rules</h1>
-        </div>
-        <div className="flex gap-2">
-          <button className="btn-secondary" onClick={applyAll} disabled={applying}>
-            {applying ? "Applying…" : "Re-apply all rules"}
-          </button>
-          <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
-            + New rule
-          </button>
-        </div>
-      </div>
-
-      {showForm && (
-        <div className="card space-y-4">
-          <div>
-            <label className="label">Rule name</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Amazon purchases" />
+    <div className="page-stack">
+      <PageHeader
+        icon="sliders"
+        title="Rules"
+        description="Automate repetitive classifications. Keep rules narrow, readable, and easy to test."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-secondary" onClick={applyAll} disabled={applying}>{applying ? "Applying…" : "Re-apply rules"}</button>
+            <button className={showForm ? "btn-secondary" : "btn-primary"} onClick={() => { setShowForm((value) => !value); setError(null); }}>{showForm ? "Close builder" : <><Icon name="plus" size={16} /> New rule</>}</button>
           </div>
+        }
+      />
 
-          <div>
-            <p className="label">Conditions (all must match)</p>
-            {conditions.map((c, i) => (
-              <div key={i} className="flex gap-2 mb-2">
-                <select className="input" value={c.field} onChange={(e) => updateAt(setConditions, i, { field: e.target.value })}>
-                  {FIELDS.map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
-                  ))}
-                </select>
-                <select className="input" value={c.operator} onChange={(e) => updateAt(setConditions, i, { operator: e.target.value })}>
-                  {OPERATORS.map((o) => (
-                    <option key={o} value={o}>
-                      {o}
-                    </option>
-                  ))}
-                </select>
-                <input className="input" placeholder="value" value={c.value} onChange={(e) => updateAt(setConditions, i, { value: e.target.value })} />
-                <button className="text-muted hover:text-expense" onClick={() => setConditions(conditions.filter((_, idx) => idx !== i))}>
-                  ✕
-                </button>
-              </div>
-            ))}
-            <button className="text-sm text-accent" onClick={() => setConditions([...conditions, { field: "counterparty", operator: "contains", value: "" }])}>
-              + Add condition
-            </button>
-          </div>
-
-          <div>
-            <p className="label">Actions</p>
-            {actions.map((a, i) => (
-              <div key={i} className="flex gap-2 mb-2">
-                <select className="input" value={a.type} onChange={(e) => updateAt(setActions, i, { type: e.target.value })}>
-                  {ACTION_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-                <input className="input" placeholder="value (id or text)" value={a.value} onChange={(e) => updateAt(setActions, i, { value: e.target.value })} />
-                <button className="text-muted hover:text-expense" onClick={() => setActions(actions.filter((_, idx) => idx !== i))}>
-                  ✕
-                </button>
-              </div>
-            ))}
-            <button className="text-sm text-accent" onClick={() => setActions([...actions, { type: "set_transaction_type", value: "" }])}>
-              + Add action
-            </button>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button className="btn-secondary" onClick={testRule}>
-              Test against existing transactions
-            </button>
-            {testResult && <span className="text-sm text-muted">{testResult.matched_count} transaction(s) would match</span>}
-          </div>
-
-          {error && <p className="text-sm text-expense">{error}</p>}
-          <button className="btn-primary" onClick={createRule}>
-            Save rule
-          </button>
-        </div>
+      {rules && rules.length > 0 && (
+        <Notice tone="info" title={`${activeCount} active rule${activeCount === 1 ? "" : "s"}`}>
+          Lower priority numbers run first. Manual classifications are not overwritten when rules are re-applied.
+        </Notice>
       )}
 
-      <div className="table-wrap">
-        <table className="data">
-          <thead>
-            <tr>
-              <th>Priority</th>
-              <th>Name</th>
-              <th>Matched</th>
-              <th>Active</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rules.map((r) => (
-              <tr key={r.id}>
-                <td>{r.priority}</td>
-                <td>
-                  <div className="font-medium">{r.name}</div>
-                  {r.description && <div className="text-xs text-muted">{r.description}</div>}
-                </td>
-                <td>{r.matched_count}</td>
-                <td>{r.is_active ? "Yes" : "No"}</td>
-                <td className="text-right">
-                  <button className="text-expense text-sm" onClick={() => deleteRule(r.id)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {showForm && (
+        <section className="panel-pad space-y-5">
+          <div>
+            <h2 className="font-semibold text-lg">Build a rule</h2>
+            <p className="text-sm text-muted mt-1">All conditions must match. Then every listed action is applied.</p>
+          </div>
+
+          <div className="form-grid">
+            <div>
+              <label className="label">Rule name</label>
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Amazon purchases" autoFocus />
+            </div>
+            <div>
+              <label className="label">Priority</label>
+              <input className="input" type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value) || 100)} />
+              <p className="field-help">Smaller numbers run before larger numbers.</p>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label">Description <span className="font-normal text-muted">(optional)</span></label>
+              <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Classify Amazon merchant payments as shopping expenses." />
+            </div>
+          </div>
+
+          <div>
+            <SectionHeader title="When all of these match" description="Keep the conditions specific enough to avoid false matches." />
+            <div className="space-y-2">
+              {conditions.map((condition, index) => (
+                <div key={index} className="soft-card">
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1.4fr_auto] gap-2 items-end">
+                    <div>
+                      <label className="label">Field</label>
+                      <select className="input" value={condition.field} onChange={(e) => changeConditionField(index, e.target.value, setConditions)}>
+                        {FIELDS.map((field) => <option key={field} value={field}>{titleCase(field)}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label">Match</label>
+                      <select className="input" value={condition.operator} onChange={(e) => updateAt(setConditions, index, { operator: e.target.value })}>
+                        {operatorsFor(condition.field).map((operator) => <option key={operator} value={operator}>{operatorLabel(operator)}</option>)}
+                      </select>
+                    </div>
+                    <ConditionValue condition={condition} onChange={(value) => updateAt(setConditions, index, { value })} resources={resources} />
+                    <button className="btn-icon md:mb-0.5" onClick={() => setConditions(conditions.filter((_, rowIndex) => rowIndex !== index))} disabled={conditions.length === 1} aria-label="Remove condition"><Icon name="x" size={16} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button className="btn-quiet mt-2 !px-2" onClick={() => setConditions([...conditions, { field: "counterparty", operator: "contains", value: "" }])}><Icon name="plus" size={15} /> Add condition</button>
+          </div>
+
+          <div>
+            <SectionHeader title="Then do these actions" description="Use the selectors below instead of memorizing database IDs." />
+            <div className="space-y-2">
+              {actions.map((action, index) => (
+                <div key={index} className="soft-card">
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr_auto] gap-2 items-end">
+                    <div>
+                      <label className="label">Action</label>
+                      <select className="input" value={action.type} onChange={(e) => updateAt(setActions, index, { type: e.target.value, value: defaultActionValue(e.target.value) })}>
+                        {ACTION_TYPES.map((type) => <option key={type} value={type}>{actionLabel(type)}</option>)}
+                      </select>
+                    </div>
+                    <ActionValue action={action} onChange={(value) => updateAt(setActions, index, { value })} resources={resources} />
+                    <button className="btn-icon md:mb-0.5" onClick={() => setActions(actions.filter((_, rowIndex) => rowIndex !== index))} disabled={actions.length === 1} aria-label="Remove action"><Icon name="x" size={16} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button className="btn-quiet mt-2 !px-2" onClick={() => setActions([...actions, { type: "set_transaction_type", value: "expense" }])}><Icon name="plus" size={15} /> Add action</button>
+          </div>
+
+          {testResult && (
+            <Notice tone={testResult.matched_count > 0 ? "success" : "warning"} title={`${testResult.matched_count} existing transaction${testResult.matched_count === 1 ? "" : "s"} match`}>
+              {testResult.explanation || "The test completed successfully."}
+            </Notice>
+          )}
+          {error && <div className="notice notice-danger"><div className="notice-body">{error}</div></div>}
+
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2 border-t border-line">
+            <button className="btn-secondary" onClick={testRule}>Test rule</button>
+            <button className="btn-primary" onClick={createRule} disabled={saving}>{saving ? "Saving…" : "Save rule"}</button>
+          </div>
+        </section>
+      )}
+
+      {rules === null ? (
+        <SkeletonRows count={5} />
+      ) : rules.length === 0 ? (
+        <EmptyState icon="sliders" title="No rules yet" description="Create a rule for recurring merchants, transfers, EMIs, or known people to reduce manual review." action={<button className="btn-primary" onClick={() => setShowForm(true)}><Icon name="plus" size={16} /> New rule</button>} />
+      ) : (
+        <div className="table-wrap table-responsive">
+          <div className="table-scroll">
+            <table className="data">
+              <thead><tr><th>Priority</th><th>Rule</th><th>Matched</th><th>Status</th><th className="text-right">Actions</th></tr></thead>
+              <tbody>
+                {rules.map((rule) => (
+                  <tr key={rule.id}>
+                    <td data-label="Priority" className="font-medium">{rule.priority}</td>
+                    <td data-label="Details">
+                      <div className="text-left">
+                        <p className="font-medium">{rule.name}</p>
+                        {rule.description && <p className="text-xs text-muted mt-1 line-clamp-2">{rule.description}</p>}
+                        <p className="text-xs text-muted mt-1">{rule.conditions.length} condition{rule.conditions.length === 1 ? "" : "s"} · {rule.actions.length} action{rule.actions.length === 1 ? "" : "s"}</p>
+                      </div>
+                    </td>
+                    <td data-label="Matched">{rule.matched_count}</td>
+                    <td data-label="Status"><span className={`pill ${rule.is_active ? "bg-green-100 text-green-800" : "bg-gray-100 text-muted"}`}>{rule.is_active ? "Active" : "Paused"}</span></td>
+                    <td data-label="Actions" className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <button className="table-action" onClick={() => toggleRule(rule)}>{rule.is_active ? "Pause" : "Enable"}</button>
+                        <button className="text-sm font-medium text-expense" onClick={() => deleteRule(rule)}>Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
+function ConditionValue({ condition, onChange, resources }: { condition: ConditionRow; onChange: (value: string) => void; resources: RuleResources }) {
+  if (condition.field === "account") {
+    return <SelectField label="Value" value={condition.value} onChange={onChange} options={resources.accounts.map((item) => [String(item.id), item.name])} placeholder="Choose account…" />;
+  }
+  if (condition.field === "direction") {
+    return <SelectField label="Value" value={condition.value} onChange={onChange} options={[["debit", "Money out (debit)"], ["credit", "Money in (credit)"]]} placeholder="Choose direction…" />;
+  }
+  if (condition.field === "transaction_type") {
+    return <SelectField label="Value" value={condition.value} onChange={onChange} options={TRANSACTION_TYPES.map((item) => [item, titleCase(item)])} placeholder="Choose type…" />;
+  }
+  return (
+    <div>
+      <label className="label">Value</label>
+      <input className="input" value={condition.value} onChange={(e) => onChange(e.target.value)} placeholder={condition.operator === "range" ? "e.g. 1000, 5000" : condition.field === "amount" ? "e.g. 18000" : "Match value"} />
+      {condition.operator === "range" && <p className="field-help">Enter minimum and maximum separated by a comma.</p>}
+    </div>
+  );
+}
+
+function ActionValue({ action, onChange, resources }: { action: ActionRow; onChange: (value: string) => void; resources: RuleResources }) {
+  if (NO_VALUE_ACTIONS.has(action.type)) return <div><label className="label">Value</label><div className="input bg-gray-50 text-muted">No value needed</div></div>;
+  if (action.type === "set_category" || action.type === "set_subcategory") return <SelectField label="Value" value={action.value} onChange={onChange} options={resources.categories.map((item) => [String(item.id), item.name])} placeholder="Choose category…" />;
+  if (action.type === "set_label") return <SelectField label="Value" value={action.value} onChange={onChange} options={resources.labels.map((item) => [String(item.id), item.name])} placeholder="Choose label…" />;
+  if (action.type === "set_person") return <SelectField label="Value" value={action.value} onChange={onChange} options={resources.people.map((item) => [String(item.id), item.display_name])} placeholder="Choose person/payee…" />;
+  if (action.type === "set_account") return <SelectField label="Value" value={action.value} onChange={onChange} options={resources.accounts.map((item) => [String(item.id), item.name])} placeholder="Choose account…" />;
+  if (action.type === "set_transaction_type") return <SelectField label="Value" value={action.value} onChange={onChange} options={TRANSACTION_TYPES.map((item) => [item, titleCase(item)])} placeholder="Choose type…" />;
+  if (action.type === "attach_commitment") return <SelectField label="Value" value={action.value} onChange={onChange} options={resources.commitments.map((item) => [String(item.commitment_id), item.name])} placeholder="Choose commitment…" />;
+  if (action.type === "attach_goal") return <SelectField label="Value" value={action.value} onChange={onChange} options={resources.goals.map((item) => [String(item.goal_id), item.name])} placeholder="Choose goal…" />;
+  return <div><label className="label">Value</label><input className="input" value={action.value} onChange={(e) => onChange(e.target.value)} /></div>;
+}
+
+function SelectField({ label, value, onChange, options, placeholder }: { label: string; value: string; onChange: (value: string) => void; options: string[][]; placeholder: string }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{placeholder}</option>
+        {options.map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function operatorsFor(field: string) {
+  if (["amount", "day_of_month"].includes(field)) return ["equals", "range", "greater_than", "less_than"];
+  if (["direction", "account", "transaction_type"].includes(field)) return ["equals"];
+  return ["contains", "equals"];
+}
+
+function changeConditionField(index: number, field: string, setter: Dispatch<SetStateAction<ConditionRow[]>>) {
+  const operator = operatorsFor(field)[0];
+  setter((prev) => prev.map((item, rowIndex) => rowIndex === index ? { field, operator, value: "" } : item));
+}
+
 function updateAt<T>(setter: Dispatch<SetStateAction<T[]>>, index: number, patch: Partial<T>) {
-  setter((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  setter((prev) => prev.map((item, rowIndex) => rowIndex === index ? { ...item, ...patch } : item));
+}
+
+function defaultActionValue(type: string) {
+  if (type === "set_transaction_type") return "expense";
+  return "";
+}
+
+function operatorLabel(value: string) {
+  const labels: Record<string, string> = { equals: "Equals", contains: "Contains", range: "Between", greater_than: "Greater than", less_than: "Less than" };
+  return labels[value] || titleCase(value);
+}
+
+function actionLabel(value: string) {
+  const labels: Record<string, string> = {
+    set_category: "Set category",
+    set_subcategory: "Set subcategory",
+    set_label: "Add label",
+    set_person: "Set person / payee",
+    set_account: "Set account",
+    set_transaction_type: "Set transaction type",
+    attach_commitment: "Attach to commitment",
+    attach_goal: "Attach to goal",
+    mark_transfer: "Mark as transfer",
+    mark_income: "Mark as income",
+    mark_expense: "Mark as expense",
+    ignore: "Ignore transaction",
+    needs_review: "Send to review inbox",
+  };
+  return labels[value] || titleCase(value);
+}
+
+function titleCase(value: string) {
+  return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

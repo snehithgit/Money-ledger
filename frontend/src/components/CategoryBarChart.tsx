@@ -36,7 +36,7 @@ export default function CategoryBarChart({ data }: { data: CategorySpendPoint[] 
                 className="h-full rounded-full transition-[width]"
                 style={{
                   width: `${pct}%`,
-                  background: "#5b3df6",
+                  background: "#4F46E5",
                   opacity: hoverIdx === null || hoverIdx === i ? 1 : 0.55,
                 }}
               />

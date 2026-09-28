@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Transactions from "./pages/Transactions";
@@ -27,6 +27,7 @@ export default function App() {
         <Route path="/imports" element={<Imports />} />
         <Route path="/categories" element={<Categories />} />
         <Route path="/more" element={<More />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
   );
