@@ -36,7 +36,41 @@ def get_active_rules(session: Session) -> list[Rule]:
     return session.exec(select(Rule).where(Rule.is_active == True).order_by(Rule.priority)).all()  # noqa: E712
 
 
-def apply_rules_to_transaction(session: Session, txn: Transaction, rules: list[Rule] | None = None) -> Transaction:
+def clear_rule_derived(session: Session, txn: Transaction) -> None:
+    """Remove only data created by rules; never touch manual user data."""
+    if txn.id is None:
+        return
+    for row in session.exec(select(TransactionLabel).where(TransactionLabel.transaction_id == txn.id, TransactionLabel.rule_id.is_not(None))).all():
+        session.delete(row)
+    for row in session.exec(select(CommitmentPayment).where(CommitmentPayment.transaction_id == txn.id, CommitmentPayment.rule_id.is_not(None))).all():
+        session.delete(row)
+    for row in session.exec(select(GoalContribution).where(GoalContribution.transaction_id == txn.id, GoalContribution.rule_id.is_not(None))).all():
+        session.delete(row)
+
+    # Backward compatibility for rows created before provenance columns
+    # existed: use the transaction's previous matched rule to identify only
+    # the exact legacy links that rule could have created.
+    if txn.matched_rule_id:
+        old_rule = session.get(Rule, txn.matched_rule_id)
+        if old_rule:
+            for action in old_rule.actions:
+                value = action.get("value")
+                if action.get("type") == "set_label" and value is not None:
+                    row = session.exec(select(TransactionLabel).where(TransactionLabel.transaction_id == txn.id, TransactionLabel.label_id == int(value), TransactionLabel.rule_id.is_(None))).first()
+                    if row: session.delete(row)
+                elif action.get("type") == "attach_commitment" and value is not None:
+                    for row in session.exec(select(CommitmentPayment).where(CommitmentPayment.transaction_id == txn.id, CommitmentPayment.commitment_id == int(value), CommitmentPayment.rule_id.is_(None))).all(): session.delete(row)
+                elif action.get("type") == "attach_goal" and value is not None:
+                    for row in session.exec(select(GoalContribution).where(GoalContribution.transaction_id == txn.id, GoalContribution.goal_id == int(value), GoalContribution.rule_id.is_(None))).all(): session.delete(row)
+    session.flush()
+
+
+def apply_rules_to_transaction(session: Session, txn: Transaction, rules: list[Rule] | None = None, *, force_manual: bool = False) -> Transaction:
+    # A human-reviewed classification is authoritative. Bulk re-application
+    # must not erase it. An explicit per-transaction reapply can opt in.
+    if txn.classification_source == "manual" and not force_manual:
+        return txn
+    clear_rule_derived(session, txn)
     if rules is None:
         rules = get_active_rules(session)
 
@@ -52,6 +86,7 @@ def apply_rules_to_transaction(session: Session, txn: Transaction, rules: list[R
         txn.matched_rule_id = None
         txn.match_explanation = None
         txn.transaction_type = TransactionType.UNKNOWN
+        txn.classification_source = "unclassified"
         return txn
 
     if len(matched) > 1:
@@ -61,6 +96,7 @@ def apply_rules_to_transaction(session: Session, txn: Transaction, rules: list[R
         txn.match_explanation = f"Rule conflict: {names} all matched. Resolve manually or narrow the rules."
         txn.matched_rule_id = None
         txn.transaction_type = TransactionType.UNKNOWN
+        txn.classification_source = "unclassified"
         return txn
 
     rule = matched[0]
@@ -68,6 +104,7 @@ def apply_rules_to_transaction(session: Session, txn: Transaction, rules: list[R
     session.add(rule)
 
     _apply_actions(session, txn, rule)
+    txn.classification_source = "rule"
     txn.matched_rule_id = rule.id
     txn.match_explanation = f"Matched rule '{rule.name}': {explain_match(rule.conditions)}"
     return txn
@@ -109,7 +146,7 @@ def _apply_actions(session: Session, txn: Transaction, rule: Rule) -> None:
                     )
                 ).first()
                 if not exists:
-                    session.add(TransactionLabel(transaction_id=txn.id, label_id=int(value)))
+                    session.add(TransactionLabel(transaction_id=txn.id, label_id=int(value), rule_id=rule.id))
         elif a_type == "attach_commitment":
             # Idempotent: re-running rules on an already-attached
             # transaction (e.g. via "apply all rules" after editing a
@@ -134,6 +171,7 @@ def _apply_actions(session: Session, txn: Transaction, rule: Rule) -> None:
                         period=_period_for(txn),
                         allocated_amount=txn.amount,
                         source_type="phonepe",
+                        rule_id=rule.id,
                     )
                 )
         elif a_type == "attach_goal":
@@ -155,6 +193,7 @@ def _apply_actions(session: Session, txn: Transaction, rule: Rule) -> None:
                         transaction_id=txn.id,
                         amount=txn.amount,
                         date=txn.date,
+                        rule_id=rule.id,
                     )
                 )
         elif a_type == "ignore":

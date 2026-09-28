@@ -111,7 +111,35 @@ export type CommitmentStatus = {
   expected_amount: number;
   paid_amount: number;
   status: string;
-  payments: { id: number; transaction_id: number | null; allocated_amount: number; source_type: string; is_manual: boolean; manual_note?: string | null }[];
+  payments: { id: number; transaction_id: number | null; allocated_amount: number; source_type: string; is_manual: boolean; manual_note?: string | null; paid_date?: string | null }[];
+};
+
+export type CommitmentCalendarItem = {
+  payment_id: number;
+  commitment_id: number;
+  commitment_name: string;
+  group_name?: string | null;
+  period: string;
+  amount: number;
+  source_type: string;
+  is_manual: boolean;
+  manual_note?: string | null;
+  transaction_id: number | null;
+};
+
+export type CommitmentCalendarDay = {
+  date: string;
+  day: number;
+  total_paid: number;
+  items: CommitmentCalendarItem[];
+};
+
+export type CommitmentCalendarMonth = {
+  month: string;
+  days: CommitmentCalendarDay[];
+  payments_count: number;
+  days_with_payments: number;
+  total_paid: number;
 };
 
 export type GoalProgress = {
@@ -120,7 +148,10 @@ export type GoalProgress = {
   target_amount: number | null;
   total_contributed: number;
   remaining: number | null;
-  by_commitment: { commitment_id: number; commitment_name: string; total: number }[];
+  by_commitment: { commitment_id: number; commitment_name: string; total: number; ytd?: number }[];
+  current_year?: number;
+  ytd_contributed?: number;
+  annual_scheduled_target?: number;
 };
 
 export type ImportBatch = {

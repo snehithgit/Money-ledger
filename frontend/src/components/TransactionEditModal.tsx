@@ -88,16 +88,15 @@ export default function TransactionEditModal({
     try {
       const rows = commitmentRows.filter((r) => r.commitment_id !== "" && Number(r.amount) > 0);
       if (rows.length === 0) throw new Error("Pick at least one commitment and an amount");
-      await Promise.all(
-        rows.map((r) =>
-          api.post(`/commitments/${r.commitment_id}/payments`, {
-            transaction_id: transaction.id,
-            period: txnPeriod,
-            allocated_amount: Number(r.amount),
-            source_type: "phonepe",
-          })
-        )
-      );
+      if (commitmentRowsTotal > transaction.amount + 0.005) throw new Error(`Allocations cannot exceed ${formatINR(transaction.amount)}`);
+      for (const r of rows) {
+        await api.post(`/commitments/${r.commitment_id}/payments`, {
+          transaction_id: transaction.id,
+          period: txnPeriod,
+          allocated_amount: Number(r.amount),
+          source_type: "phonepe",
+        });
+      }
       setCommitmentMsg(`Attached to ${rows.length} commitment${rows.length === 1 ? "" : "s"} for ${txnPeriod}.`);
     } catch (e: any) {
       setCommitmentError(e.message || "Failed to attach");
@@ -135,6 +134,9 @@ export default function TransactionEditModal({
     setSaving(true);
     setError(null);
     try {
+      if (splitMode && Math.abs(splitTotal - transaction.amount) > 0.01) {
+        throw new Error(`Splits must total ${formatINR(transaction.amount)} (currently ${formatINR(splitTotal)})`);
+      }
       await api.patch(`/transactions/${transaction.id}`, {
         category_id: categoryId || null,
         transaction_type: type,
@@ -142,9 +144,6 @@ export default function TransactionEditModal({
         needs_review: needsReview,
       });
       if (splitMode) {
-        if (Math.abs(splitTotal - transaction.amount) > 0.01) {
-          throw new Error(`Splits must total ${formatINR(transaction.amount)} (currently ${formatINR(splitTotal)})`);
-        }
         await api.post(`/transactions/${transaction.id}/split`, {
           splits: splits.map((s) => ({ amount: Number(s.amount), category_id: s.category_id || null })),
         });

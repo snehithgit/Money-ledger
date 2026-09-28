@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
-from app.models.label import Label
+from app.models.label import Label, TransactionLabel
 from app.schemas.schemas import LabelCreate
 
 router = APIRouter(prefix="/api/labels", tags=["labels"])
@@ -32,6 +32,8 @@ def delete_label(label_id: int, session: Session = Depends(get_session)):
     label = session.get(Label, label_id)
     if not label:
         raise HTTPException(404, "label not found")
+    for link in session.exec(select(TransactionLabel).where(TransactionLabel.label_id == label_id)).all():
+        session.delete(link)
     session.delete(label)
     session.commit()
     return {"ok": True}

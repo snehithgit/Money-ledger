@@ -25,7 +25,8 @@ async def upload_phonepe_statement(
     account_id: int | None = None,
     session: Session = Depends(get_session),
 ):
-    if not file.filename.lower().endswith(".csv"):
+    filename = file.filename or "upload.csv"
+    if not filename.lower().endswith(".csv"):
         raise HTTPException(400, "only CSV PhonePe statements are supported right now")
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
@@ -33,7 +34,10 @@ async def upload_phonepe_statement(
         tmp_path = tmp.name
 
     try:
-        batch = import_phonepe_csv(session, tmp_path, file.filename, account_id=account_id)
+        try:
+            batch = import_phonepe_csv(session, tmp_path, filename, account_id=account_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

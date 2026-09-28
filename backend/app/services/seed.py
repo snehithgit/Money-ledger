@@ -31,6 +31,7 @@ from app.models.enums import AccountType, ConditionField, ConditionOperator, Fre
 from app.models.goal import Goal
 from app.models.label import Label
 from app.models.rule import Rule
+from app.models.setting import Setting
 
 DEFAULT_CATEGORIES: list[tuple[str, list[str]]] = [
     ("Income", ["Salary", "Rental Income", "Other Income"]),
@@ -53,13 +54,43 @@ DEFAULT_CATEGORIES: list[tuple[str, list[str]]] = [
 DEFAULT_LABELS = ["EMI", "Daughter", "Sukanya", "HomeLoan", "Rental", "Family", "Recurring", "Medical", "Work", "Cash"]
 
 
+def _seed_key(kind: str, name: str, parent_id: int | None = None) -> str:
+    suffix = f":{parent_id}" if parent_id is not None else ""
+    return f"seed:{kind}:{name}{suffix}"
+
+
+def _seeded_by_id(session: Session, kind: str, name: str, model, parent_id: int | None = None):
+    setting = session.get(Setting, _seed_key(kind, name, parent_id))
+    if setting and setting.value:
+        try:
+            obj = session.get(model, int(setting.value))
+            if obj is not None:
+                return obj
+        except ValueError:
+            pass
+    return None
+
+
+def _remember_seed(session: Session, kind: str, name: str, obj, parent_id: int | None = None) -> None:
+    key = _seed_key(kind, name, parent_id)
+    setting = session.get(Setting, key)
+    if setting is None:
+        session.add(Setting(key=key, value=str(obj.id)))
+    else:
+        setting.value = str(obj.id)
+        session.add(setting)
+
+
+
 def _get_or_create_category(session: Session, name: str, parent_id: int | None = None) -> Category:
-    existing = session.exec(select(Category).where(Category.name == name, Category.parent_id == parent_id)).first()
+    existing = _seeded_by_id(session, "category", name, Category, parent_id)
+    if existing is None:
+        existing = session.exec(select(Category).where(Category.name == name, Category.parent_id == parent_id)).first()
     if existing:
+        _remember_seed(session, "category", name, existing, parent_id)
         return existing
     cat = Category(name=name, parent_id=parent_id, is_system=True)
-    session.add(cat)
-    session.flush()
+    session.add(cat); session.flush(); _remember_seed(session, "category", name, cat, parent_id)
     return cat
 
 
@@ -76,18 +107,22 @@ def seed_categories(session: Session) -> dict[str, Category]:
 
 def seed_labels(session: Session) -> None:
     for name in DEFAULT_LABELS:
-        existing = session.exec(select(Label).where(Label.name == name)).first()
-        if not existing:
-            session.add(Label(name=name))
+        existing = _seeded_by_id(session, "label", name, Label)
+        if existing is None:
+            existing = session.exec(select(Label).where(Label.name == name)).first()
+        if existing is None:
+            existing = Label(name=name); session.add(existing); session.flush()
+        _remember_seed(session, "label", name, existing)
 
 
 def _get_or_create_account(session: Session, name: str, account_type: AccountType, **kwargs) -> Account:
-    existing = session.exec(select(Account).where(Account.name == name)).first()
+    existing = _seeded_by_id(session, "account", name, Account)
+    if existing is None:
+        existing = session.exec(select(Account).where(Account.name == name)).first()
     if existing:
-        return existing
+        _remember_seed(session, "account", name, existing); return existing
     acct = Account(name=name, account_type=account_type, **kwargs)
-    session.add(acct)
-    session.flush()
+    session.add(acct); session.flush(); _remember_seed(session, "account", name, acct)
     return acct
 
 
@@ -100,32 +135,35 @@ def seed_accounts(session: Session) -> dict[str, Account]:
 
 
 def _get_or_create_rule(session: Session, name: str, **kwargs) -> Rule:
-    existing = session.exec(select(Rule).where(Rule.name == name)).first()
+    existing = _seeded_by_id(session, "rule", name, Rule)
+    if existing is None:
+        existing = session.exec(select(Rule).where(Rule.name == name)).first()
     if existing:
-        return existing
+        _remember_seed(session, "rule", name, existing); return existing
     rule = Rule(name=name, **kwargs)
-    session.add(rule)
-    session.flush()
+    session.add(rule); session.flush(); _remember_seed(session, "rule", name, rule)
     return rule
 
 
 def _get_or_create_goal(session: Session, name: str, **kwargs) -> Goal:
-    existing = session.exec(select(Goal).where(Goal.name == name)).first()
+    existing = _seeded_by_id(session, "goal", name, Goal)
+    if existing is None:
+        existing = session.exec(select(Goal).where(Goal.name == name)).first()
     if existing:
-        return existing
+        _remember_seed(session, "goal", name, existing); return existing
     goal = Goal(name=name, **kwargs)
-    session.add(goal)
-    session.flush()
+    session.add(goal); session.flush(); _remember_seed(session, "goal", name, goal)
     return goal
 
 
 def _get_or_create_commitment(session: Session, name: str, **kwargs) -> RecurringCommitment:
-    existing = session.exec(select(RecurringCommitment).where(RecurringCommitment.name == name)).first()
+    existing = _seeded_by_id(session, "commitment", name, RecurringCommitment)
+    if existing is None:
+        existing = session.exec(select(RecurringCommitment).where(RecurringCommitment.name == name)).first()
     if existing:
-        return existing
+        _remember_seed(session, "commitment", name, existing); return existing
     c = RecurringCommitment(name=name, **kwargs)
-    session.add(c)
-    session.flush()
+    session.add(c); session.flush(); _remember_seed(session, "commitment", name, c)
     return c
 
 
