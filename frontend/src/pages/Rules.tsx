@@ -34,13 +34,14 @@ export default function Rules() {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState(100);
+  const [priority, setPriority] = useState(30);
   const [conditions, setConditions] = useState<ConditionRow[]>([{ field: "counterparty", operator: "contains", value: "" }]);
   const [actions, setActions] = useState<ActionRow[]>([{ type: "set_transaction_type", value: "expense" }]);
   const [testResult, setTestResult] = useState<{ matched_count: number; explanation?: string } | null>(null);
   const [applying, setApplying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ruleSearch, setRuleSearch] = useState("");
 
   async function load() {
     const [ruleRows, accounts, categories, people, commitments, goals, labels] = await Promise.all([
@@ -153,7 +154,7 @@ export default function Rules() {
   function resetForm() {
     setName("");
     setDescription("");
-    setPriority(100);
+    setPriority(30);
     setConditions([{ field: "counterparty", operator: "contains", value: "" }]);
     setActions([{ type: "set_transaction_type", value: "expense" }]);
     setTestResult(null);
@@ -161,6 +162,11 @@ export default function Rules() {
   }
 
   const activeCount = useMemo(() => rules?.filter((rule) => rule.is_active).length || 0, [rules]);
+  const filteredRules = useMemo(() => {
+    const q = ruleSearch.trim().toLowerCase();
+    if (!rules || !q) return rules || [];
+    return rules.filter((rule) => `${rule.name} ${rule.description || ""}`.toLowerCase().includes(q));
+  }, [rules, ruleSearch]);
 
   return (
     <div className="page-stack">
@@ -178,7 +184,7 @@ export default function Rules() {
 
       {rules && rules.length > 0 && (
         <Notice tone="info" title={`${activeCount} active rule${activeCount === 1 ? "" : "s"}`}>
-          Lower priority numbers run first. Manual classifications are not overwritten when rules are re-applied.
+          The lowest matching priority number wins. Same-priority matches are combined only when their actions agree; competing actions go to Review. Manual classifications are never overwritten when rules are re-applied.
         </Notice>
       )}
 
@@ -196,8 +202,8 @@ export default function Rules() {
             </div>
             <div>
               <label className="label">Priority</label>
-              <input className="input" type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value) || 100)} />
-              <p className="field-help">Smaller numbers run before larger numbers.</p>
+              <input className="input" type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value) || 30)} />
+              <p className="field-help">Smaller numbers win. Use a lower number for specific exceptions and a higher number for broad merchant rules.</p>
             </div>
             <div className="sm:col-span-2">
               <label className="label">Description <span className="font-normal text-muted">(optional)</span></label>
@@ -267,6 +273,17 @@ export default function Rules() {
         </section>
       )}
 
+      {rules && rules.length > 0 && (
+        <div className="panel-pad">
+          <label className="label">Find a rule</label>
+          <div className="relative max-w-xl">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"><Icon name="search" size={16} /></span>
+            <input className="input pl-9" value={ruleSearch} onChange={(e) => setRuleSearch(e.target.value)} placeholder="Search merchant, category, or description…" />
+          </div>
+          <p className="field-help mt-1">Showing {filteredRules.length} of {rules.length} rules.</p>
+        </div>
+      )}
+
       {rules === null ? (
         <SkeletonRows count={5} />
       ) : rules.length === 0 ? (
@@ -277,7 +294,7 @@ export default function Rules() {
             <table className="data">
               <thead><tr><th>Priority</th><th>Rule</th><th>Matched</th><th>Status</th><th className="text-right">Actions</th></tr></thead>
               <tbody>
-                {rules.map((rule) => (
+                {filteredRules.map((rule) => (
                   <tr key={rule.id}>
                     <td data-label="Priority" className="font-medium">{rule.priority}</td>
                     <td data-label="Details">
@@ -352,7 +369,7 @@ function SelectField({ label, value, onChange, options, placeholder }: { label: 
 function operatorsFor(field: string) {
   if (["amount", "day_of_month"].includes(field)) return ["equals", "range", "greater_than", "less_than"];
   if (["direction", "account", "transaction_type"].includes(field)) return ["equals"];
-  return ["contains", "equals"];
+  return ["contains", "word_contains", "equals"];
 }
 
 function changeConditionField(index: number, field: string, setter: Dispatch<SetStateAction<ConditionRow[]>>) {
@@ -370,7 +387,7 @@ function defaultActionValue(type: string) {
 }
 
 function operatorLabel(value: string) {
-  const labels: Record<string, string> = { equals: "Equals", contains: "Contains", range: "Between", greater_than: "Greater than", less_than: "Less than" };
+  const labels: Record<string, string> = { equals: "Equals", contains: "Contains text", word_contains: "Contains whole word", range: "Between", greater_than: "Greater than", less_than: "Less than" };
   return labels[value] || titleCase(value);
 }
 

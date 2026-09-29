@@ -133,6 +133,168 @@ def calculate_category_spend(session: Session, start: date_, end: date_) -> list
     return out
 
 
+def calculate_money_calendar(session: Session, year: int, month: int) -> dict:
+    """Return a truthful month calendar of *all* money movement.
+
+    ``debit_total`` / ``credit_total`` are raw statement movement, so the
+    calendar never hides an unclassified transaction.  ``spend_total`` and
+    ``income_total`` use the finance classification buckets above and are kept
+    separate from transfers/unknowns to avoid calling every debit an expense.
+    """
+    from app.models.category import Category
+    from app.models.commitment import CommitmentPayment, RecurringCommitment
+
+    start, end = _month_range(year, month)
+    txns = sorted(_transactions_in_range(session, start, end), key=lambda t: (t.date, t.time or "", t.id or 0))
+    categories = {c.id: c for c in session.exec(select(Category)).all()}
+    accounts = {a.id: a for a in session.exec(select(Account)).all()}
+
+    txn_ids = [t.id for t in txns if t.id is not None]
+    splits_by_txn: dict[int, list[TransactionSplit]] = defaultdict(list)
+    if txn_ids:
+        for split in session.exec(select(TransactionSplit).where(TransactionSplit.transaction_id.in_(txn_ids))).all():
+            splits_by_txn[split.transaction_id].append(split)
+
+    commitment_payments = session.exec(
+        select(CommitmentPayment).where(
+            CommitmentPayment.paid_date >= start,
+            CommitmentPayment.paid_date < end,
+        )
+    ).all()
+    commitments = {c.id: c for c in session.exec(select(RecurringCommitment)).all()}
+    commitment_by_txn: dict[int, list[dict]] = defaultdict(list)
+    manual_commitments_by_date: dict[str, list[dict]] = defaultdict(list)
+    for payment in commitment_payments:
+        commitment = commitments.get(payment.commitment_id)
+        if not commitment or payment.paid_date is None:
+            continue
+        item = {
+            "payment_id": payment.id,
+            "commitment_id": payment.commitment_id,
+            "commitment_name": commitment.name,
+            "period": payment.period,
+            "amount": round(float(payment.allocated_amount), 2),
+            "source_type": payment.source_type,
+            "is_manual": payment.is_manual,
+        }
+        if payment.transaction_id is not None:
+            commitment_by_txn[payment.transaction_id].append(item)
+        else:
+            manual_commitments_by_date[payment.paid_date.isoformat()].append(item)
+
+    days: dict[str, dict] = {}
+    month_totals = {
+        "debit_total": 0.0,
+        "credit_total": 0.0,
+        "spend_total": 0.0,
+        "income_total": 0.0,
+        "transfer_total": 0.0,
+        "unclassified_total": 0.0,
+        "unclassified_count": 0,
+        "transaction_count": len(txns),
+    }
+
+    def day_bucket(key: str) -> dict:
+        if key not in days:
+            days[key] = {
+                "date": key,
+                "day": int(key[-2:]),
+                "debit_total": 0.0,
+                "credit_total": 0.0,
+                "spend_total": 0.0,
+                "income_total": 0.0,
+                "transfer_total": 0.0,
+                "unclassified_total": 0.0,
+                "unclassified_count": 0,
+                "transactions": [],
+                "manual_commitments": [],
+            }
+        return days[key]
+
+    for txn in txns:
+        key = txn.date.isoformat()
+        day = day_bucket(key)
+        amount = float(txn.amount)
+        is_debit = txn.direction == Direction.DEBIT
+        is_credit = txn.direction == Direction.CREDIT
+        if is_debit:
+            day["debit_total"] += amount
+            month_totals["debit_total"] += amount
+        elif is_credit:
+            day["credit_total"] += amount
+            month_totals["credit_total"] += amount
+
+        if txn.transaction_type in MONEY_OUT_TYPES:
+            day["spend_total"] += amount
+            month_totals["spend_total"] += amount
+        elif txn.transaction_type in MONEY_IN_TYPES:
+            day["income_total"] += amount
+            month_totals["income_total"] += amount
+        elif txn.transaction_type in EXCLUDED_TYPES:
+            day["transfer_total"] += amount
+            month_totals["transfer_total"] += amount
+        elif txn.transaction_type == TransactionType.UNKNOWN:
+            day["unclassified_total"] += amount
+            day["unclassified_count"] += 1
+            month_totals["unclassified_total"] += amount
+            month_totals["unclassified_count"] += 1
+
+        category = categories.get(txn.category_id) if txn.category_id else None
+        parent = categories.get(category.parent_id) if category and category.parent_id else None
+        account = accounts.get(txn.account_id)
+        split_rows = []
+        for split in splits_by_txn.get(txn.id or -1, []):
+            split_category = categories.get(split.category_id) if split.category_id else None
+            split_parent = categories.get(split_category.parent_id) if split_category and split_category.parent_id else None
+            split_rows.append({
+                "id": split.id,
+                "amount": round(float(split.amount), 2),
+                "category_id": split.category_id,
+                "category_name": split_category.name if split_category else None,
+                "parent_category_name": split_parent.name if split_parent else None,
+                "counterparty_id": split.counterparty_id,
+                "notes": split.notes,
+            })
+        day["transactions"].append({
+            "id": txn.id,
+            "date": key,
+            "time": txn.time,
+            "amount": round(amount, 2),
+            "direction": txn.direction.value if hasattr(txn.direction, "value") else str(txn.direction),
+            "counterparty": txn.raw_counterparty,
+            "narration": txn.raw_narration,
+            "transaction_type": txn.transaction_type.value if hasattr(txn.transaction_type, "value") else str(txn.transaction_type),
+            "category_id": txn.category_id,
+            "category_name": category.name if category else None,
+            "parent_category_name": parent.name if parent else None,
+            "account_id": txn.account_id,
+            "account_name": account.name if account else None,
+            "needs_review": txn.needs_review,
+            "splits": split_rows,
+            "commitments": commitment_by_txn.get(txn.id or -1, []),
+        })
+
+    for key, rows in manual_commitments_by_date.items():
+        day = day_bucket(key)
+        day["manual_commitments"].extend(sorted(rows, key=lambda row: (row["commitment_name"], row["payment_id"])))
+
+    ordered_days = [days[key] for key in sorted(days)]
+    for day in ordered_days:
+        for field in ("debit_total", "credit_total", "spend_total", "income_total", "transfer_total", "unclassified_total"):
+            day[field] = round(float(day[field]), 2)
+        day["net_movement"] = round(day["credit_total"] - day["debit_total"], 2)
+
+    for field in ("debit_total", "credit_total", "spend_total", "income_total", "transfer_total", "unclassified_total"):
+        month_totals[field] = round(float(month_totals[field]), 2)
+    month_totals["net_movement"] = round(month_totals["credit_total"] - month_totals["debit_total"], 2)
+
+    return {
+        "month": f"{year:04d}-{month:02d}",
+        "days": ordered_days,
+        **month_totals,
+    }
+
+
 def calculate_account_balance(session: Session, account_id: int) -> float:
     account = session.get(Account, account_id)
     if not account:

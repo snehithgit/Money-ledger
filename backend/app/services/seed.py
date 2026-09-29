@@ -350,139 +350,408 @@ def seed_all(session: Session) -> None:
     )
 
     seed_merchant_rules(session, categories)
+    _maybe_reapply_seed_rules(session)
 
     session.commit()
 
 
 # --- Generic merchant/counterparty detection rules ----------------------
 #
-# Unlike the evidence-based rules above (tied to THIS user's specific
-# masked account numbers, each backed by real repeated evidence - see
-# backend/docs/rule_evidence.md), these are generic starter rules built
-# from well-known Indian UPI/PhonePe merchant naming conventions
-# (Swiggy, Amazon, hospital chains, mobile recharge/bill aggregators,
-# etc.). They exist so common, everyday spending gets auto-categorized
-# out of the box instead of piling up in Review for merchants that
-# aren't tied to a personal commitment.
+# These rules were expanded after profiling the user's real finance.db plus
+# all supplied PhonePe CSV imports plus the 3,774-row finance database (3,761 unique imported PhonePe transaction IDs).  The
+# rules intentionally target merchant-like words, not people's names or masked
+# bank accounts. Ambiguous person-to-person payments stay in Review.
 #
-# They are ordinary rules like any other - fully visible, editable,
-# and deletable from the Rules page. If your statement spells a
-# merchant differently (or a keyword below is too broad/narrow for
-# your data), just edit or delete that one rule; nothing here is
-# hard-coded elsewhere. Matches are case-insensitive "contains" against
-# `counterparty`, restricted to debits only so a refund/credit from the
-# same merchant doesn't get silently marked as an expense.
+# Priority convention:
+#   10  exact commitment/account rules
+#   20  data-backed exceptions that must beat a broader generic rule
+#   40  generic merchant/category rules
+#   50+ review-only / catch-all rules
 #
-# (keyword, category name, transaction_type)
-MERCHANT_RULES: list[tuple[str, str, str]] = [
-    # Food delivery -> Food / Food Delivery
-    ("swiggy", "Food Delivery", "expense"),
-    ("zomato", "Food Delivery", "expense"),
-    ("eatsure", "Food Delivery", "expense"),
-    ("faasos", "Food Delivery", "expense"),
-    # Online groceries -> Food / Groceries
-    ("bigbasket", "Groceries", "expense"),
-    ("blinkit", "Groceries", "expense"),
-    ("zepto", "Groceries", "expense"),
-    ("dunzo", "Groceries", "expense"),
-    ("jiomart", "Groceries", "expense"),
-    ("dmart", "Groceries", "expense"),
-    # E-commerce -> Shopping / General Shopping
-    ("amazon", "General Shopping", "expense"),
-    ("flipkart", "General Shopping", "expense"),
-    ("myntra", "General Shopping", "expense"),
-    ("ajio", "General Shopping", "expense"),
-    ("meesho", "General Shopping", "expense"),
-    ("nykaa", "General Shopping", "expense"),
-    # Hospitals/clinics/diagnostics -> Medical / Doctor/Hospital
-    ("hospital", "Doctor/Hospital", "expense"),
-    ("clinic", "Doctor/Hospital", "expense"),
-    ("diagnostic", "Doctor/Hospital", "expense"),
-    ("fortis", "Doctor/Hospital", "expense"),
-    ("max healthcare", "Doctor/Hospital", "expense"),
-    ("pathlab", "Doctor/Hospital", "expense"),
-    # Pharmacies -> Medical / Pharmacy
-    ("pharmeasy", "Pharmacy", "expense"),
-    ("netmeds", "Pharmacy", "expense"),
-    ("1mg", "Pharmacy", "expense"),
-    ("medplus", "Pharmacy", "expense"),
-    ("apollo pharmacy", "Pharmacy", "expense"),
-    # Insurance -> Medical / Insurance
-    ("policybazaar", "Insurance", "expense"),
-    ("licindia", "Insurance", "expense"),
-    ("lic of india", "Insurance", "expense"),
-    ("star health", "Insurance", "expense"),
-    ("hdfc life", "Insurance", "expense"),
-    ("icici prudential", "Insurance", "expense"),
-    # Streaming/subscriptions -> Entertainment / Subscriptions
-    ("netflix", "Subscriptions", "expense"),
-    ("hotstar", "Subscriptions", "expense"),
-    ("spotify", "Subscriptions", "expense"),
-    ("sonyliv", "Subscriptions", "expense"),
-    ("zee5", "Subscriptions", "expense"),
-    ("youtube premium", "Subscriptions", "expense"),
-    # Movies/outings -> Entertainment / Outings
-    ("bookmyshow", "Outings", "expense"),
-    ("pvr", "Outings", "expense"),
-    ("inox", "Outings", "expense"),
-    # Fuel -> Transport / Fuel
-    ("indian oil", "Fuel", "expense"),
-    ("iocl", "Fuel", "expense"),
-    ("hpcl", "Fuel", "expense"),
-    ("bpcl", "Fuel", "expense"),
-    ("bharat petroleum", "Fuel", "expense"),
-    # Cabs -> Transport / Cab/Auto
-    ("uber", "Cab/Auto", "expense"),
-    ("ola cabs", "Cab/Auto", "expense"),
-    ("rapido", "Cab/Auto", "expense"),
-    # Recharge / bill payments -> Home / Utilities
-    ("airtel", "Utilities", "expense"),
-    ("jio recharge", "Utilities", "expense"),
-    ("myjio", "Utilities", "expense"),
-    ("reliance jio", "Utilities", "expense"),
-    ("vodafone", "Utilities", "expense"),
-    ("bsnl", "Utilities", "expense"),
-    ("tatasky", "Utilities", "expense"),
-    ("tata sky", "Utilities", "expense"),
-    ("dishtv", "Utilities", "expense"),
-    ("dish tv", "Utilities", "expense"),
-    ("bharat gas", "Utilities", "expense"),
-    ("indane", "Utilities", "expense"),
-    ("billdesk", "Utilities", "expense"),  # a real UPI bill-payment gateway used for many billers
-    ("bbps", "Utilities", "expense"),  # Bharat Bill Payment System - same idea
-    ("freecharge", "Utilities", "expense"),
-    # Travel -> Travel / Flights/Trains, Hotels, Trip Expenses
-    ("irctc", "Flights/Trains", "expense"),
-    ("indigo", "Flights/Trains", "expense"),
-    ("spicejet", "Flights/Trains", "expense"),
-    ("air india", "Flights/Trains", "expense"),
-    ("vistara", "Flights/Trains", "expense"),
-    ("akasa air", "Flights/Trains", "expense"),
-    ("oyo", "Hotels", "expense"),
-    ("makemytrip", "Trip Expenses", "expense"),
-    ("goibibo", "Trip Expenses", "expense"),
-    ("yatra", "Trip Expenses", "expense"),
-    ("redbus", "Trip Expenses", "expense"),
+# The rule engine uses the lowest numeric matching priority. Multiple rules at
+# the same priority are allowed when their actions are identical (e.g. a shop
+# name containing both "soup" and "noodle" still cleanly becomes Dining Out).
+
+MERCHANT_RULES_VERSION = "2026-09-28-counterparty-v3"
+
+# (keyword, category, transaction_type, operator, priority)
+MERCHANT_RULES: list[tuple[str, str, str, str, int]] = [
+    # Real-data exceptions / strong identifiers.
+    ("port hospital canteen", "Dining Out", "expense", "contains", 20),
+    ("barbeque nation", "Dining Out", "expense", "contains", 20),
+    ("indian railways catering and tourism", "Flights/Trains", "expense", "contains", 20),
+    ("vasavi caterings", "Dining Out", "expense", "contains", 20),
+    ("vasavi catterings", "Dining Out", "expense", "contains", 20),
+    ("eastern power distribution company", "Utilities", "expense", "contains", 20),
+    ("jio mobility", "Utilities", "expense", "contains", 20),
+
+    # Food delivery.
+    ("swiggy", "Food Delivery", "expense", "contains", 40),
+    ("zomato", "Food Delivery", "expense", "contains", 40),
+    ("eatsure", "Food Delivery", "expense", "contains", 40),
+    ("faasos", "Food Delivery", "expense", "contains", 40),
+
+    # Groceries / provisions.
+    ("bigbasket", "Groceries", "expense", "contains", 40),
+    ("bbnow", "Groceries", "expense", "contains", 40),
+    ("blinkit", "Groceries", "expense", "contains", 40),
+    ("zepto", "Groceries", "expense", "contains", 40),
+    ("dunzo", "Groceries", "expense", "contains", 40),
+    ("jiomart", "Groceries", "expense", "contains", 40),
+    ("dmart", "Groceries", "expense", "contains", 40),
+    ("avenue supermarts", "Groceries", "expense", "contains", 40),
+    ("supermarket", "Groceries", "expense", "contains", 40),
+    ("supermarts", "Groceries", "expense", "contains", 40),
+    ("smart bazaar", "Groceries", "expense", "contains", 40),
+    ("kirana", "Groceries", "expense", "word_contains", 40),
+    ("fruits", "Groceries", "expense", "word_contains", 40),
+    ("fruit stall", "Groceries", "expense", "contains", 40),
+    ("vegetable", "Groceries", "expense", "word_contains", 40),
+    ("vegetables", "Groceries", "expense", "word_contains", 40),
+    ("spencers retail", "Groceries", "expense", "contains", 40),
+    ("dairy", "Groceries", "expense", "word_contains", 40),
+    ("milk", "Groceries", "expense", "word_contains", 40),
+    ("chicken shop", "Groceries", "expense", "contains", 40),
+    ("chicken centre", "Groceries", "expense", "contains", 40),
+    ("chicken center", "Groceries", "expense", "contains", 40),
+    ("general store", "Groceries", "expense", "contains", 50),
+    ("general stores", "Groceries", "expense", "contains", 50),
+
+    # Eating out. Kept separate from delivery so the calendar can answer
+    # whether food was ordered or bought directly.
+    ("soup", "Dining Out", "expense", "word_contains", 40),
+    ("soups", "Dining Out", "expense", "word_contains", 40),
+    ("tiffin", "Dining Out", "expense", "contains", 40),
+    ("tiffen", "Dining Out", "expense", "contains", 40),
+    ("noodle", "Dining Out", "expense", "contains", 40),
+    ("noodel", "Dining Out", "expense", "contains", 40),
+    ("hot food", "Dining Out", "expense", "contains", 40),
+    ("curry point", "Dining Out", "expense", "contains", 40),
+    ("restaurant", "Dining Out", "expense", "word_contains", 40),
+    ("canteen", "Dining Out", "expense", "word_contains", 40),
+    ("cafe", "Dining Out", "expense", "word_contains", 40),
+    ("tea stall", "Dining Out", "expense", "contains", 40),
+    ("tea shop", "Dining Out", "expense", "contains", 40),
+    ("fast food", "Dining Out", "expense", "contains", 40),
+    ("fastfood", "Dining Out", "expense", "contains", 40),
+    ("food court", "Dining Out", "expense", "contains", 40),
+    ("food plaza", "Dining Out", "expense", "contains", 40),
+    ("egg roll", "Dining Out", "expense", "contains", 40),
+    ("pizza", "Dining Out", "expense", "word_contains", 40),
+    ("burger", "Dining Out", "expense", "word_contains", 40),
+    ("biryani", "Dining Out", "expense", "word_contains", 40),
+    ("bakery", "Dining Out", "expense", "word_contains", 40),
+    ("baker", "Dining Out", "expense", "word_contains", 40),
+    ("bakers", "Dining Out", "expense", "word_contains", 40),
+    ("candy", "Dining Out", "expense", "word_contains", 40),
+    ("momo", "Dining Out", "expense", "word_contains", 40),
+    ("pani puri", "Dining Out", "expense", "contains", 40),
+    ("hot chat", "Dining Out", "expense", "contains", 40),
+    ("rolls", "Dining Out", "expense", "word_contains", 40),
+    ("sweets", "Dining Out", "expense", "contains", 40),
+    ("ice cream", "Dining Out", "expense", "contains", 40),
+    ("juice", "Dining Out", "expense", "word_contains", 40),
+    ("lassi", "Dining Out", "expense", "word_contains", 40),
+    ("dhaba", "Dining Out", "expense", "word_contains", 40),
+    ("dabha", "Dining Out", "expense", "word_contains", 40),
+    ("fried chicken", "Dining Out", "expense", "contains", 40),
+    ("chicken pakodi", "Dining Out", "expense", "contains", 40),
+    ("non veg parcels", "Dining Out", "expense", "contains", 40),
+    ("pastry", "Dining Out", "expense", "word_contains", 40),
+    ("snacks", "Dining Out", "expense", "word_contains", 40),
+    ("catering", "Dining Out", "expense", "word_contains", 40),
+    ("caterings", "Dining Out", "expense", "word_contains", 40),
+    ("catterings", "Dining Out", "expense", "word_contains", 40),
+    ("kfc", "Dining Out", "expense", "word_contains", 40),
+    ("dominos", "Dining Out", "expense", "contains", 40),
+    ("mcdonald", "Dining Out", "expense", "contains", 40),
+    ("mc donald", "Dining Out", "expense", "contains", 40),
+
+    # Education / books. Whole-word book/books is safe for the observed data: it
+    # matches real book shops but does not match concatenated names such as BookMyShow.
+    ("stationery", "Books/Supplies", "expense", "contains", 40),
+    ("stationary", "Books/Supplies", "expense", "word_contains", 40),
+    ("stationer", "Books/Supplies", "expense", "word_contains", 40),
+    ("stationers", "Books/Supplies", "expense", "word_contains", 40),
+    ("book", "Books/Supplies", "expense", "word_contains", 40),
+    ("books", "Books/Supplies", "expense", "word_contains", 40),
+    ("book stall", "Books/Supplies", "expense", "contains", 40),
+    ("book shop", "Books/Supplies", "expense", "contains", 40),
+    ("book center", "Books/Supplies", "expense", "contains", 40),
+    ("book centre", "Books/Supplies", "expense", "contains", 40),
+    ("school", "Fees", "expense", "word_contains", 40),
+    ("educational institutions", "Fees", "expense", "contains", 40),
+
+    # E-commerce / shopping.
+    ("amazon", "General Shopping", "expense", "contains", 40),
+    ("flipkart", "General Shopping", "expense", "contains", 40),
+    ("myntra", "General Shopping", "expense", "contains", 40),
+    ("ajio", "General Shopping", "expense", "contains", 40),
+    ("meesho", "General Shopping", "expense", "contains", 40),
+    ("nykaa", "General Shopping", "expense", "contains", 40),
+    ("digital age retail", "General Shopping", "expense", "contains", 40),
+    ("lucky retail stores", "General Shopping", "expense", "contains", 40),
+    ("decathlon", "General Shopping", "expense", "contains", 40),
+    ("shoes", "Clothing", "expense", "word_contains", 40),
+    ("shoe company", "Clothing", "expense", "contains", 40),
+    ("fashion", "Clothing", "expense", "contains", 40),
+    ("garments", "Clothing", "expense", "word_contains", 40),
+    ("cloth shop", "Clothing", "expense", "contains", 40),
+    ("bata india", "Clothing", "expense", "contains", 40),
+    ("westside", "Clothing", "expense", "word_contains", 40),
+    ("chandana brother", "Clothing", "expense", "contains", 40),
+    ("electronics", "Electronics", "expense", "word_contains", 40),
+    ("electricals", "Electronics", "expense", "word_contains", 40),
+    ("cell point", "Electronics", "expense", "contains", 40),
+
+    # Medical. Whole-word hospital avoids the old "hospitality" false
+    # positive. Specific restaurant/canteen exceptions above win at priority 20.
+    ("hospital", "Doctor/Hospital", "expense", "word_contains", 40),
+    ("hospitals", "Doctor/Hospital", "expense", "word_contains", 40),
+    ("clinic", "Doctor/Hospital", "expense", "word_contains", 40),
+    ("nursing home", "Doctor/Hospital", "expense", "contains", 40),
+    ("health care", "Doctor/Hospital", "expense", "contains", 40),
+    ("healthcare", "Doctor/Hospital", "expense", "contains", 40),
+    ("medical centre", "Doctor/Hospital", "expense", "contains", 40),
+    ("medical center", "Doctor/Hospital", "expense", "contains", 40),
+    ("diagnostic", "Doctor/Hospital", "expense", "contains", 40),
+    ("ivf", "Doctor/Hospital", "expense", "word_contains", 40),
+    ("fortis", "Doctor/Hospital", "expense", "contains", 40),
+    ("max healthcare", "Doctor/Hospital", "expense", "contains", 40),
+    ("pathlab", "Doctor/Hospital", "expense", "contains", 40),
+    ("pharmacy", "Pharmacy", "expense", "word_contains", 40),
+    ("pharmacies", "Pharmacy", "expense", "word_contains", 40),
+    ("medicals", "Pharmacy", "expense", "word_contains", 40),
+    ("medical store", "Pharmacy", "expense", "contains", 40),
+    ("medical stores", "Pharmacy", "expense", "contains", 40),
+    ("medical and general", "Pharmacy", "expense", "contains", 40),
+    ("chemist", "Pharmacy", "expense", "contains", 40),
+    ("pharmacist", "Pharmacy", "expense", "word_contains", 40),
+    ("pharmeasy", "Pharmacy", "expense", "contains", 40),
+    ("netmeds", "Pharmacy", "expense", "contains", 40),
+    ("1mg", "Pharmacy", "expense", "contains", 40),
+    ("medplus", "Pharmacy", "expense", "contains", 40),
+    ("apollo pharmacy", "Pharmacy", "expense", "contains", 40),
+
+    # Insurance.
+    ("policybazaar", "Insurance", "expense", "contains", 40),
+    ("licindia", "Insurance", "expense", "contains", 40),
+    ("lic of india", "Insurance", "expense", "contains", 40),
+    ("star health", "Insurance", "expense", "contains", 40),
+    ("hdfc life", "Insurance", "expense", "contains", 40),
+    ("icici prudential", "Insurance", "expense", "contains", 40),
+
+    # Entertainment / outings.
+    ("netflix", "Subscriptions", "expense", "contains", 40),
+    ("hotstar", "Subscriptions", "expense", "contains", 40),
+    ("spotify", "Subscriptions", "expense", "contains", 40),
+    ("sonyliv", "Subscriptions", "expense", "contains", 40),
+    ("zee5", "Subscriptions", "expense", "contains", 40),
+    ("youtube premium", "Subscriptions", "expense", "contains", 40),
+    ("bookmyshow", "Outings", "expense", "contains", 40),
+    ("pvr", "Outings", "expense", "contains", 40),
+    ("inox", "Outings", "expense", "contains", 40),
+    ("amusement", "Outings", "expense", "contains", 40),
+    ("playmore", "Outings", "expense", "contains", 40),
+
+    # Transport and vehicle upkeep.
+    ("indian oil", "Fuel", "expense", "contains", 40),
+    ("iocl", "Fuel", "expense", "contains", 40),
+    ("hpcl", "Fuel", "expense", "contains", 40),
+    ("bpcl", "Fuel", "expense", "contains", 40),
+    ("bharat petroleum", "Fuel", "expense", "contains", 40),
+    ("petrol pump", "Fuel", "expense", "contains", 40),
+    ("petroleum", "Fuel", "expense", "word_contains", 40),
+    ("fuels", "Fuel", "expense", "word_contains", 40),
+    ("fuel fil", "Fuel", "expense", "contains", 40),
+    ("filling station", "Fuel", "expense", "contains", 40),
+    ("uber", "Cab/Auto", "expense", "contains", 40),
+    ("ola cabs", "Cab/Auto", "expense", "contains", 40),
+    ("rapido", "Cab/Auto", "expense", "contains", 40),
+    ("bike wash", "Vehicle Maintenance", "expense", "contains", 40),
+    ("automobile", "Vehicle Maintenance", "expense", "contains", 40),
+    ("automobiles", "Vehicle Maintenance", "expense", "contains", 40),
+    ("tyres", "Vehicle Maintenance", "expense", "word_contains", 40),
+    ("battery zone", "Vehicle Maintenance", "expense", "contains", 40),
+
+    # Home / utilities / maintenance.
+    ("airtel", "Utilities", "expense", "contains", 40),
+    ("jio recharge", "Utilities", "expense", "contains", 40),
+    ("myjio", "Utilities", "expense", "contains", 40),
+    ("reliance jio", "Utilities", "expense", "contains", 40),
+    ("recharge", "Utilities", "expense", "word_contains", 40),
+    ("recharges", "Utilities", "expense", "word_contains", 40),
+    ("vodafone", "Utilities", "expense", "contains", 40),
+    ("bsnl", "Utilities", "expense", "contains", 40),
+    ("broadband", "Utilities", "expense", "word_contains", 40),
+    ("electricity", "Utilities", "expense", "word_contains", 40),
+    ("power distribution", "Utilities", "expense", "contains", 40),
+    ("apepdcl", "Utilities", "expense", "contains", 40),
+    ("tatasky", "Utilities", "expense", "contains", 40),
+    ("tata sky", "Utilities", "expense", "contains", 40),
+    ("dishtv", "Utilities", "expense", "contains", 40),
+    ("dish tv", "Utilities", "expense", "contains", 40),
+    ("bharat gas", "Utilities", "expense", "contains", 40),
+    ("indane", "Utilities", "expense", "contains", 40),
+    ("lpg", "Utilities", "expense", "word_contains", 40),
+    ("billdesk", "Utilities", "expense", "contains", 40),
+    ("bbps", "Utilities", "expense", "contains", 40),
+    ("freecharge", "Utilities", "expense", "contains", 40),
+    ("hardware", "Maintenance", "expense", "word_contains", 40),
+
+    # Travel.
+    ("irctc", "Flights/Trains", "expense", "contains", 40),
+    ("indian railways", "Flights/Trains", "expense", "contains", 40),
+    ("indigo", "Flights/Trains", "expense", "contains", 40),
+    ("spicejet", "Flights/Trains", "expense", "contains", 40),
+    ("air india", "Flights/Trains", "expense", "contains", 40),
+    ("vistara", "Flights/Trains", "expense", "contains", 40),
+    ("akasa air", "Flights/Trains", "expense", "contains", 40),
+    ("oyo", "Hotels", "expense", "contains", 40),
+    ("resort", "Hotels", "expense", "word_contains", 40),
+    ("resorts", "Hotels", "expense", "word_contains", 40),
+    ("lodge", "Hotels", "expense", "word_contains", 40),
+    ("makemytrip", "Trip Expenses", "expense", "contains", 40),
+    ("goibibo", "Trip Expenses", "expense", "contains", 40),
+    ("yatra", "Trip Expenses", "expense", "contains", 40),
+    ("redbus", "Trip Expenses", "expense", "contains", 40),
+]
+
+# Credits received back from a known merchant are safe to treat as refunds.
+# This is deliberately much smaller than the debit list.
+MERCHANT_REFUND_RULES: list[tuple[str, str, str]] = [
+    ("flipkart", "General Shopping", "contains"),
+    ("amazon", "General Shopping", "contains"),
+    ("swiggy", "Food Delivery", "contains"),
+    ("zomato", "Food Delivery", "contains"),
+    ("irctc", "Flights/Trains", "contains"),
+    ("indian railways", "Flights/Trains", "contains"),
+    ("airtel", "Utilities", "contains"),
+    ("recharge", "Utilities", "word_contains"),
+    ("bookmyshow", "Outings", "contains"),
 ]
 
 
+def _generic_conditions(keyword: str, operator: str, direction: str) -> list[dict]:
+    return [
+        {"field": ConditionField.COUNTERPARTY.value, "operator": operator, "value": keyword},
+        {"field": ConditionField.DIRECTION.value, "operator": ConditionOperator.EQUALS.value, "value": direction},
+    ]
+
+
+def _seed_generic_rule(
+    session: Session,
+    *,
+    name: str,
+    description: str,
+    keyword: str,
+    operator: str,
+    direction: str,
+    category: Category,
+    txn_type: str,
+    priority: int,
+) -> Rule:
+    actions = [
+        {"type": RuleActionType.SET_CATEGORY.value, "value": category.id},
+        {"type": RuleActionType.SET_TRANSACTION_TYPE.value, "value": txn_type},
+    ]
+    new_conditions = _generic_conditions(keyword, operator, direction)
+    rule = _get_or_create_rule(
+        session,
+        name,
+        description=description,
+        priority=priority,
+        conditions=new_conditions,
+        actions=actions,
+    )
+
+    # Existing installations may already have the old generated rule. Update
+    # only an untouched legacy generated definition; never overwrite a rule the
+    # user actually edited.
+    legacy_conditions = _generic_conditions(keyword, ConditionOperator.CONTAINS.value, direction)
+    generic_descriptions = (
+        "Generic starter rule (not evidence-based)",
+        "Data-informed merchant rule",
+        "Recognized merchant credit",
+    )
+    looks_generated = not rule.description or any(rule.description.startswith(prefix) for prefix in generic_descriptions)
+    if looks_generated and rule.actions == actions and rule.conditions in (legacy_conditions, new_conditions):
+        rule.conditions = new_conditions
+        rule.actions = actions
+        rule.priority = priority
+        rule.description = description
+        rule.is_active = True
+        session.add(rule)
+    return rule
+
+
 def seed_merchant_rules(session: Session, categories: dict[str, Category]) -> None:
-    for keyword, category_name, txn_type in MERCHANT_RULES:
+    for keyword, category_name, txn_type, operator, priority in MERCHANT_RULES:
         category = categories.get(category_name)
         if not category:
             continue
-        _get_or_create_rule(
+        _seed_generic_rule(
             session,
-            f"Merchant: {keyword.title()} -> {category_name}",
-            description=f"Generic starter rule (not evidence-based) - counterparty contains "
-            f"'{keyword}'. Edit or delete this if your statement spells it differently.",
-            priority=40,
-            conditions=[
-                {"field": ConditionField.COUNTERPARTY.value, "operator": ConditionOperator.CONTAINS.value, "value": keyword},
-                {"field": ConditionField.DIRECTION.value, "operator": ConditionOperator.EQUALS.value, "value": "debit"},
-            ],
-            actions=[
-                {"type": RuleActionType.SET_CATEGORY.value, "value": category.id},
-                {"type": RuleActionType.SET_TRANSACTION_TYPE.value, "value": txn_type},
-            ],
+            name=f"Merchant: {keyword.title()} -> {category_name}",
+            description=(
+                f"Data-informed merchant rule: debit counterparty {operator.replace('_', ' ')} "
+                f"'{keyword}'. Built from the supplied finance database/imports; editable from Rules."
+            ),
+            keyword=keyword,
+            operator=operator,
+            direction="debit",
+            category=category,
+            txn_type=txn_type,
+            priority=priority,
         )
+
+    for keyword, category_name, operator in MERCHANT_REFUND_RULES:
+        category = categories.get(category_name)
+        if not category:
+            continue
+        _seed_generic_rule(
+            session,
+            name=f"Refund: {keyword.title()} -> {category_name}",
+            description=f"Recognized merchant credit from '{keyword}' -> refund; keeps returned money separate from income.",
+            keyword=keyword,
+            operator=operator,
+            direction="credit",
+            category=category,
+            txn_type="refund",
+            priority=40,
+        )
+
+
+def _maybe_reapply_seed_rules(session: Session) -> None:
+    """One-time reclassification when the built-in merchant rules change.
+
+    Manual classifications are authoritative and are skipped by the rule
+    engine. Imported/unclassified and rule-managed rows are re-evaluated so an
+    existing database benefits from newly-added patterns without requiring the
+    user to remember to press "Re-apply rules" after an upgrade.
+    """
+    version_key = "seed:merchant_rules_version"
+    current = session.get(Setting, version_key)
+    if current and current.value == MERCHANT_RULES_VERSION:
+        return
+
+    from app.models.transaction import Transaction
+    from app.rules.engine import apply_rules_to_transaction, get_active_rules
+
+    session.flush()
+    rules = get_active_rules(session)
+    txns = session.exec(
+        select(Transaction).where(
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.classification_source != "manual",
+        )
+    ).all()
+    for txn in txns:
+        apply_rules_to_transaction(session, txn, rules)
+        session.add(txn)
+
+    if current is None:
+        session.add(Setting(key=version_key, value=MERCHANT_RULES_VERSION))
+    else:
+        current.value = MERCHANT_RULES_VERSION
+        session.add(current)

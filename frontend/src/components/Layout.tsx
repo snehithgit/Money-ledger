@@ -12,6 +12,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/", label: "Overview", icon: "home", end: true },
       { to: "/transactions", label: "Transactions", icon: "list" },
+      { to: "/calendar", label: "Calendar", icon: "calendar" },
       { to: "/commitments", label: "Commitments", icon: "repeat" },
     ],
   },
@@ -37,7 +38,7 @@ const NAV_GROUPS: NavGroup[] = [
 const MOBILE_ITEMS: NavItem[] = [
   { to: "/", label: "Home", icon: "home", end: true },
   { to: "/transactions", label: "Transactions", icon: "list" },
-  { to: "/commitments", label: "Commitments", icon: "repeat" },
+  { to: "/calendar", label: "Calendar", icon: "calendar" },
   { to: "/more", label: "More", icon: "grid" },
 ];
 

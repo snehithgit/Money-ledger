@@ -11,6 +11,7 @@ import Rules from "./pages/Rules";
 import Imports from "./pages/Imports";
 import Categories from "./pages/Categories";
 import More from "./pages/More";
+import Calendar from "./pages/Calendar";
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/transactions" element={<Transactions />} />
+        <Route path="/calendar" element={<Calendar />} />
         <Route path="/review" element={<Review />} />
         <Route path="/commitments" element={<Commitments />} />
         <Route path="/goals" element={<Goals />} />

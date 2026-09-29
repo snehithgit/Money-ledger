@@ -9,7 +9,7 @@ from app.models.enums import AccountType, Direction, TransactionType
 from app.models.goal import GoalContribution
 from app.models.transaction import Transaction, TransactionSplit
 from app.rules.engine import apply_rules_to_transaction, get_active_rules
-from app.services.calculations import calculate_category_spend, calculate_commitment_status
+from app.services.calculations import calculate_category_spend, calculate_commitment_status, calculate_money_calendar
 from app.services.seed import seed_all
 
 
@@ -113,3 +113,46 @@ def test_commitment_calendar_uses_paid_dates(client):
     assert cal.status_code == 200
     rows = {d["date"]: d for d in cal.json()["days"]}
     assert rows["2026-09-14"]["items"][0]["commitment_id"] == commitment_id
+
+
+def test_money_calendar_shows_all_debits_and_credits_even_when_unclassified(client):
+    aid = client.post("/api/accounts", json={"name":"Calendar Cashflow","account_type":"bank_savings"}).json()["id"]
+    debit = client.post("/api/transactions", json={
+        "date":"2026-09-12","amount":345.5,"direction":"debit","account_id":aid,
+        "raw_narration":"Paid to Unknown Daily Shop","raw_counterparty":"Unknown Daily Shop"
+    })
+    credit = client.post("/api/transactions", json={
+        "date":"2026-09-12","amount":1000,"direction":"credit","account_id":aid,
+        "raw_narration":"Received from Someone","raw_counterparty":"Someone"
+    })
+    assert debit.status_code == 200 and credit.status_code == 200
+
+    response = client.get("/api/reports/calendar", params={"year":2026,"month":9})
+    assert response.status_code == 200
+    data = response.json()
+    day = next(row for row in data["days"] if row["date"] == "2026-09-12")
+    assert day["debit_total"] >= 345.5
+    assert day["credit_total"] >= 1000
+    assert day["unclassified_count"] >= 2
+    assert any(row["counterparty"] == "Unknown Daily Shop" for row in day["transactions"])
+
+
+def test_money_calendar_exposes_transaction_splits(session):
+    from app.models.category import Category
+
+    account = Account(name="Split Calendar", account_type=AccountType.BANK_SAVINGS)
+    session.add(account); session.flush()
+    food = Category(name="Calendar Food")
+    medical = Category(name="Calendar Medical")
+    session.add(food); session.add(medical); session.flush()
+    txn = _txn(session, account.id, 1000, "Split Merchant")
+    session.add(TransactionSplit(transaction_id=txn.id, amount=650, category_id=food.id))
+    session.add(TransactionSplit(transaction_id=txn.id, amount=350, category_id=medical.id))
+    session.commit()
+
+    data = calculate_money_calendar(session, 2026, 9)
+    day = next(row for row in data["days"] if row["date"] == "2026-09-01")
+    row = next(item for item in day["transactions"] if item["id"] == txn.id)
+    assert [(split["category_name"], split["amount"]) for split in row["splits"]] == [
+        ("Calendar Food", 650.0), ("Calendar Medical", 350.0)
+    ]

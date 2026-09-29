@@ -157,3 +157,119 @@ def test_rule_conflict_is_flagged_not_guessed(session):
     assert txn.needs_review is True
     assert txn.review_reason == "rule_conflict"
     assert txn.transaction_type == TransactionType.UNKNOWN
+
+
+def test_real_data_food_and_books_keywords_classify_safely(session):
+    from app.models.category import Category
+
+    seed_all(session)
+    phonepe = session.exec(select(Account).where(Account.account_type == AccountType.PHONEPE_WALLET)).first()
+    rules = get_active_rules(session)
+
+    book = _make_txn(
+        session, phonepe.id,
+        amount=125.0,
+        raw_narration="Paid to Vaseem Book and Stationery",
+        raw_counterparty="Vaseem Book and Stationery",
+        reference="R-BOOK-REAL-1",
+    )
+    soup = _make_txn(
+        session, phonepe.id,
+        amount=50.0,
+        raw_narration="Paid to Soupy noodles 1",
+        raw_counterparty="Soupy noodles 1",
+        reference="R-SOUP-REAL-1",
+    )
+    apply_rules_to_transaction(session, book, rules)
+    apply_rules_to_transaction(session, soup, rules)
+    session.commit()
+
+    book_category = session.get(Category, book.category_id)
+    soup_category = session.get(Category, soup.category_id)
+    assert book.transaction_type == TransactionType.EXPENSE
+    assert book_category.name == "Books/Supplies"
+    assert soup.transaction_type == TransactionType.EXPENSE
+    assert soup_category.name == "Dining Out"
+
+
+def test_specific_food_rule_beats_generic_hospital_rule(session):
+    from app.models.category import Category
+
+    seed_all(session)
+    phonepe = session.exec(select(Account).where(Account.account_type == AccountType.PHONEPE_WALLET)).first()
+    rules = get_active_rules(session)
+
+    canteen = _make_txn(
+        session, phonepe.id,
+        amount=70.0,
+        raw_narration="Paid to PORT HOSPITAL CANTEEN",
+        raw_counterparty="PORT HOSPITAL CANTEEN",
+        reference="R-HOSP-CANTEEN-1",
+    )
+    hospitality = _make_txn(
+        session, phonepe.id,
+        amount=1850.0,
+        raw_narration="Paid to BARBEQUE NATION HOSPITALITY LIMITED",
+        raw_counterparty="BARBEQUE NATION HOSPITALITY LIMITED",
+        reference="R-HOSPITALITY-1",
+    )
+    apply_rules_to_transaction(session, canteen, rules)
+    apply_rules_to_transaction(session, hospitality, rules)
+    session.commit()
+
+    assert session.get(Category, canteen.category_id).name == "Dining Out"
+    assert session.get(Category, hospitality.category_id).name == "Dining Out"
+    assert canteen.needs_review is False
+    assert hospitality.needs_review is False
+
+
+def test_compatible_same_priority_rules_do_not_create_false_conflict(session):
+    from app.models.category import Category
+
+    seed_all(session)
+    phonepe = session.exec(select(Account).where(Account.account_type == AccountType.PHONEPE_WALLET)).first()
+    txn = _make_txn(
+        session, phonepe.id,
+        amount=250.0,
+        raw_narration="Paid to Example Cafe Restaurant",
+        raw_counterparty="Example Cafe Restaurant",
+        reference="R-COMPAT-1",
+    )
+    apply_rules_to_transaction(session, txn, get_active_rules(session))
+    session.commit()
+
+    assert txn.needs_review is False
+    assert txn.transaction_type == TransactionType.EXPENSE
+    assert session.get(Category, txn.category_id).name == "Dining Out"
+    assert "compatible rules" in (txn.match_explanation or "").lower()
+
+
+def test_stationers_and_bookmyshow_do_not_collide(session):
+    """Whole-word book/stationer rules should catch real stationery shops
+    without treating the concatenated BookMyShow brand as education."""
+    from app.models.category import Category
+
+    seed_all(session)
+    phonepe = session.exec(select(Account).where(Account.account_type == AccountType.PHONEPE_WALLET)).first()
+    rules = get_active_rules(session)
+
+    stationers = _make_txn(
+        session, phonepe.id,
+        amount=90.0,
+        raw_narration="Paid to K R Stationers",
+        raw_counterparty="K R Stationers",
+        reference="R-STATIONERS-REAL-1",
+    )
+    outing = _make_txn(
+        session, phonepe.id,
+        amount=450.0,
+        raw_narration="Paid to Bookmyshow",
+        raw_counterparty="Bookmyshow",
+        reference="R-BOOKMYSHOW-1",
+    )
+    apply_rules_to_transaction(session, stationers, rules)
+    apply_rules_to_transaction(session, outing, rules)
+    session.commit()
+
+    assert session.get(Category, stationers.category_id).name == "Books/Supplies"
+    assert session.get(Category, outing.category_id).name == "Outings"

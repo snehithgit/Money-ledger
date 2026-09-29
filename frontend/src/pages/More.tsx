@@ -7,6 +7,13 @@ type Group = { title: string; items: Item[] };
 
 const GROUPS: Group[] = [
   {
+    title: "Money",
+    items: [
+      { to: "/calendar", label: "Money calendar", blurb: "Daily money in, out, and details", icon: "calendar" },
+      { to: "/commitments", label: "Commitments", blurb: "Recurring payments and due status", icon: "repeat" },
+    ],
+  },
+  {
     title: "Organize",
     items: [
       { to: "/review", label: "Review Inbox", blurb: "Clear uncertain transactions", icon: "flag" },

@@ -1,23 +1,19 @@
 """
 The rule engine: deterministic, explainable, no ML.
 
-For each transaction, every *active* rule is checked in priority order
-(all conditions in a rule must match - AND semantics). What happens
-next depends on how many rules match:
+For each transaction, every *active* rule is checked (all conditions in a
+rule use AND semantics). Lower numeric priority is more specific / more
+important. If several rules match, only the rules at the best (lowest)
+priority participate. This lets a narrow exception override a broad generic
+merchant rule without creating a false conflict.
 
-  * 0 rules match  -> transaction stays UNKNOWN / needs_review=True.
-  * 1 rule matches  -> its actions are applied automatically, and
-    `match_explanation` records exactly which conditions fired, so
-    every auto-categorized transaction can show its "why" (spec
-    section 45: no unexplained auto-categorization).
-  * 2+ rules match  -> nothing is applied automatically. The
-    transaction is flagged needs_review with reason "rule_conflict"
-    and the explanation lists every rule that matched, so the user
-    resolves the ambiguity in the Review Inbox instead of the engine
-    guessing (spec section 15/45).
+  * 0 matches -> UNKNOWN / needs_review=True.
+  * one best-priority match -> apply it automatically.
+  * several best-priority matches with the same actions -> they are compatible;
+    apply once and record all matching rule names.
+  * several best-priority matches with different actions -> rule_conflict.
 
-Rules never guess a confidence score - a rule either matches or it
-doesn't.
+Rules never guess a confidence score - a rule either matches or it doesn't.
 """
 from __future__ import annotations
 
@@ -89,24 +85,39 @@ def apply_rules_to_transaction(session: Session, txn: Transaction, rules: list[R
         txn.classification_source = "unclassified"
         return txn
 
-    if len(matched) > 1:
-        names = ", ".join(f"'{r.name}'" for r in matched)
+    best_priority = min(r.priority for r in matched)
+    finalists = [r for r in matched if r.priority == best_priority]
+
+    def action_signature(rule: Rule) -> tuple:
+        return tuple(sorted((str(a.get("type")), repr(a.get("value"))) for a in rule.actions))
+
+    signatures = {action_signature(r) for r in finalists}
+    if len(finalists) > 1 and len(signatures) > 1:
+        names = ", ".join(f"'{r.name}'" for r in finalists)
         txn.needs_review = True
         txn.review_reason = "rule_conflict"
-        txn.match_explanation = f"Rule conflict: {names} all matched. Resolve manually or narrow the rules."
+        txn.match_explanation = (
+            f"Rule conflict at priority {best_priority}: {names} matched with different actions. "
+            "Resolve manually or make one rule more specific."
+        )
         txn.matched_rule_id = None
         txn.transaction_type = TransactionType.UNKNOWN
         txn.classification_source = "unclassified"
         return txn
 
-    rule = matched[0]
-    rule.matched_count = (rule.matched_count or 0) + 1
-    session.add(rule)
+    rule = finalists[0]
+    for matched_rule in finalists:
+        matched_rule.matched_count = (matched_rule.matched_count or 0) + 1
+        session.add(matched_rule)
 
     _apply_actions(session, txn, rule)
     txn.classification_source = "rule"
     txn.matched_rule_id = rule.id
-    txn.match_explanation = f"Matched rule '{rule.name}': {explain_match(rule.conditions)}"
+    if len(finalists) == 1:
+        txn.match_explanation = f"Matched rule '{rule.name}': {explain_match(rule.conditions)}"
+    else:
+        names = ", ".join(f"'{r.name}'" for r in finalists)
+        txn.match_explanation = f"Matched compatible rules {names} at priority {best_priority}; their actions are identical."
     return txn
 
 

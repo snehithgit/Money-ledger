@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.models.transaction import Transaction
 
 
@@ -40,6 +42,9 @@ def evaluate_condition(txn: Transaction, condition: dict) -> bool:
         return target == _s(value)
     if op == "contains":
         return _s(value) in target
+    if op == "word_contains":
+        needle = _s(value)
+        return bool(re.search(r"(?<!\w)" + re.escape(needle) + r"(?!\w)", target, flags=re.UNICODE))
     return False
 
 
@@ -66,6 +71,8 @@ def explain_match(conditions: list[dict]) -> str:
         field, op, value = c["field"], c["operator"], c["value"]
         if op == "contains":
             parts.append(f"{field} contains '{value}'")
+        elif op == "word_contains":
+            parts.append(f"{field} contains word '{value}'")
         elif op == "equals":
             parts.append(f"{field} equals '{value}'")
         elif op == "range":

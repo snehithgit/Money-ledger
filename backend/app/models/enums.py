@@ -95,6 +95,7 @@ class ConditionField(str, Enum):
 class ConditionOperator(str, Enum):
     EQUALS = "equals"
     CONTAINS = "contains"
+    WORD_CONTAINS = "word_contains"
     RANGE = "range"
     GT = "greater_than"
     LT = "less_than"

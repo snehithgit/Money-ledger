@@ -171,3 +171,71 @@ export type ReviewInbox = {
   total: number;
   groups: { reason: string; count: number; transactions: any[] }[];
 };
+
+export type MoneyCalendarCommitment = {
+  payment_id: number;
+  commitment_id: number;
+  commitment_name: string;
+  period: string;
+  amount: number;
+  source_type: string;
+  is_manual: boolean;
+};
+
+export type MoneyCalendarSplit = {
+  id: number;
+  amount: number;
+  category_id?: number | null;
+  category_name?: string | null;
+  parent_category_name?: string | null;
+  counterparty_id?: number | null;
+  notes?: string | null;
+};
+
+export type MoneyCalendarTransaction = {
+  id: number;
+  date: string;
+  time?: string | null;
+  amount: number;
+  direction: "debit" | "credit";
+  counterparty: string;
+  narration: string;
+  transaction_type: string;
+  category_id?: number | null;
+  category_name?: string | null;
+  parent_category_name?: string | null;
+  account_id: number;
+  account_name?: string | null;
+  needs_review: boolean;
+  splits: MoneyCalendarSplit[];
+  commitments: MoneyCalendarCommitment[];
+};
+
+export type MoneyCalendarDay = {
+  date: string;
+  day: number;
+  debit_total: number;
+  credit_total: number;
+  spend_total: number;
+  income_total: number;
+  transfer_total: number;
+  unclassified_total: number;
+  unclassified_count: number;
+  net_movement: number;
+  transactions: MoneyCalendarTransaction[];
+  manual_commitments: MoneyCalendarCommitment[];
+};
+
+export type MoneyCalendarMonth = {
+  month: string;
+  days: MoneyCalendarDay[];
+  debit_total: number;
+  credit_total: number;
+  spend_total: number;
+  income_total: number;
+  transfer_total: number;
+  unclassified_total: number;
+  unclassified_count: number;
+  transaction_count: number;
+  net_movement: number;
+};

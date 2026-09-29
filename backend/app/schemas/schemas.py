@@ -187,8 +187,8 @@ class RuleCondition(BaseModel):
 
     @model_validator(mode="after")
     def valid_value(self):
-        if self.operator == "contains" and (not isinstance(self.value, str) or not self.value.strip()):
-            raise ValueError("contains requires a non-empty string")
+        if self.operator in {"contains", "word_contains"} and (not isinstance(self.value, str) or not self.value.strip()):
+            raise ValueError(f"{self.operator} requires a non-empty string")
         if self.operator == "range" and (not isinstance(self.value, list) or len(self.value) != 2):
             raise ValueError("range requires exactly two values")
         return self
@@ -211,7 +211,7 @@ class RuleCreate(BaseModel):
     description: Optional[str] = None
     conditions: list[RuleCondition] = Field(min_length=1)
     actions: list[RuleAction] = Field(min_length=1)
-    priority: int = 100
+    priority: int = 30
     is_active: bool = True
 
 

@@ -6,15 +6,9 @@ Sukanya Samriddhi contributions, the home loan EMI and top-up EMI, and
 the Union/Asha home loan arrangement. No cloud account, no telemetry, no
 ads. Everything lives in one SQLite file on your own machine.
 
-This build covers **Phases 1–4** of the project spec:
+The current build includes the core ledger, duplicate-safe PhonePe imports, explainable rule engine and Review Inbox, recurring commitments/goals, dashboard analytics, and a full **Money Calendar** that shows daily money out, money in, categories, counterparties, transfers, commitments, and the exact transactions behind each date.
 
-1. **Foundation** — accounts, transactions, categories, labels, counterparties, manual entry, responsive UI.
-2. **PhonePe Import** — CSV parser, duplicate-proof import, import history.
-3. **Rule Engine** — deterministic auto-categorization, explainable, with a Review Inbox for anything ambiguous.
-4. **Personal Trackers** — the recurring-commitment engine, seeded with your five specific commitments.
-
-Dashboard/analytics charts, budgets/goals UI polish, and backup/PIN/export
-(Phases 5–7) are intentionally **not** built yet — see [What's not built yet](#whats-not-built-yet-phases-5-7).
+The seeded merchant rules were also expanded from the supplied real database/import history. See `DATA_RULE_AUDIT_2026-09-28.md` for the measured coverage and false-positive controls.
 
 ---
 
@@ -100,7 +94,7 @@ instead, so nothing that depends on them silently breaks).
 
 **Rules** page → **+ New rule**. A rule has:
 
-- **Conditions** (all must match): counterparty, narration, UPI ID, amount, direction, account, day of month, transaction type, bank/instrument, or reference — each with an operator (equals / contains / range / greater than / less than).
+- **Conditions** (all must match): counterparty, narration, UPI ID, amount, direction, account, day of month, transaction type, bank/instrument, or reference — with operators such as equals, contains text, **contains whole word**, range, greater than, and less than.
 - **Actions**: set category/subcategory/person/account/transaction type, attach to a commitment or goal, mark as transfer/income/expense, ignore, or force needs-review.
 
 Use **Test against existing transactions** before saving to see exactly
@@ -109,9 +103,7 @@ rules** to run every active rule against every existing transaction
 (useful after tightening a rule) — this is idempotent, so running it
 repeatedly never double-counts a commitment payment.
 
-If two active rules both match the same transaction, nothing is applied
-automatically — it goes to the Review Inbox as a conflict instead.
-Deleting a rule never touches transactions it already classified.
+Rule priority is deterministic: **the lowest numeric matching priority wins**. This lets a specific exception outrank a broad merchant rule. If several rules tie at that winning priority and their actions agree, they are compatible; if their actions compete, the transaction goes to the Review Inbox instead of being guessed. Manual classifications remain authoritative when rules are re-applied.
 
 ## 8. Managing people (counterparties)
 
@@ -121,7 +113,18 @@ name differently — use **Merge duplicates** to pick two entries that are
 actually the same person; this is always a manual, explicit action and
 is never done automatically based on name similarity.
 
-## 9. Creating recurring commitments
+## 9. Money calendar
+
+Open **Calendar** from the main navigation. Pick any month to see the real statement movement by day:
+
+- **Money out** and **Money in** are raw debit/credit totals, so unclassified transactions are never hidden.
+- Click a day to see the exact counterparties, amounts, account, classification/category, narration, commitment links, and items still needing review.
+- A category breakdown answers “what did I spend money on that day?” while transfers and unknown items remain visibly separate from classified spending.
+- Manual commitment-only entries appear for context but are not added again to debit/credit totals.
+
+The commitment page keeps its focused payment calendar for recurring obligations; the Money Calendar is the broader all-transaction view.
+
+## 10. Creating recurring commitments
 
 **Commitments** page shows every active commitment for the selected
 month, grouped (e.g. "Home / Property Finance", "Sukanya Samriddhi").
@@ -136,7 +139,7 @@ from rent + ₹15,000 + ₹5,000 via PhonePe all count toward the same
 ₹40,000/month obligation. Status is computed automatically: Pending,
 Partial, Completed, Overpaid, or Needs Review.
 
-## 10. The Sukanya Samriddhi tracker
+## 11. The Sukanya Samriddhi tracker
 
 Seeded automatically:
 
@@ -147,7 +150,7 @@ Both feed the **Sukanya Samriddhi** goal on the **Goals** page, which
 shows combined year-to-date progress without double-counting either
 contribution.
 
-## 11. The home loan trackers
+## 12. The home loan trackers
 
 Three separate, never-combined trackers, all under the "Home / Property
 Finance" group:
@@ -159,7 +162,7 @@ Finance" group:
 See `backend/docs/rule_evidence.md` for the exact evidence behind each
 auto-match (counterparty pattern, amount, occurrence count, date range).
 
-## 12. Updating the app
+## 13. Updating the app
 
 ```bash
 git pull   # if you're tracking this in your own git remote
@@ -169,7 +172,7 @@ docker compose up -d --build
 Your data lives in the `finance_tracker_data` Docker volume, not in the
 containers, so rebuilding never loses anything.
 
-## 13. Where your database lives
+## 14. Where your database lives
 
 Inside the backend container: `/data/finance.db` (SQLite), with raw
 imported statement files archived alongside it in `/data/raw_imports/`
@@ -195,17 +198,9 @@ docker compose up -d
 
 ---
 
-## What's not built yet (Phases 5–7)
+## Remaining optional features
 
-By explicit choice, this build stops after Phase 4. Not yet built:
-
-- **Dashboard charts & full analytics** (Phase 5) — the Dashboard page shows this month's cash flow, active commitment statuses, and spend-by-type as plain numbers/cards, not charts.
-- **Budget planner UI, polished Goals UI, scheduled payments** (Phase 6) — the `budgets` table exists in the schema; there's no UI for it yet.
-- **In-app backup/restore, CSV/XLSX/JSON/PDF export, PIN/auto-lock** (Phase 7) — use the `docker cp` approach above for backups in the meantime.
-
-The database schema already has the tables these need (see
-`backend/app/models/`), so none of this requires a breaking schema
-change later — it's additive.
+The core tracker, analytics, goals/commitments and money calendar are implemented. Optional future additions include a richer budget planner, in-app backup/restore, additional export formats, and PIN/auto-lock. Until backup UI is added, use the Docker-volume backup commands above.
 
 ## Architecture
 

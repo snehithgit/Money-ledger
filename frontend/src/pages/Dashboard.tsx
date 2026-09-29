@@ -50,6 +50,7 @@ export default function Dashboard() {
   const activeCommitments = commitments?.length ?? 0;
 
   const quickLinks: { to: string; label: string; blurb: string; icon: IconName }[] = [
+    { to: "/calendar", label: "Money calendar", blurb: "Daily money in and out", icon: "calendar" },
     { to: "/review", label: "Review inbox", blurb: inbox?.total ? `${inbox.total} item${inbox.total === 1 ? "" : "s"} waiting` : "Nothing waiting", icon: "flag" },
     { to: "/accounts", label: "Accounts", blurb: accounts ? `${accounts.length} active account${accounts.length === 1 ? "" : "s"}` : "Balances and sources", icon: "wallet" },
     { to: "/goals", label: "Goals", blurb: "Savings progress", icon: "target" },
@@ -58,7 +59,7 @@ export default function Dashboard() {
 
   return (
     <div className="page-stack">
-      <PageHeader icon="home" title="Overview" description={`A clear view of your money for ${monthLabel}.`} />
+      <PageHeader icon="home" title="Overview" description={`A clear view of your money for ${monthLabel}.`} actions={<Link to="/calendar" className="btn-secondary"><Icon name="calendar" size={16} /> Money calendar</Link>} />
 
       <div className="metric-grid">
         <MetricCard label="Total balance" value={totalBalance === null ? "…" : formatINR(totalBalance)} helper={accounts ? `${accounts.length} active account${accounts.length === 1 ? "" : "s"}` : "Loading accounts"} icon="wallet" tone="accent" />

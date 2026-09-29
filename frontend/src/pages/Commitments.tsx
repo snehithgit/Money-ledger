@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, CommitmentCalendarDay, CommitmentCalendarMonth, CommitmentStatus } from "../api/client";
 import { currentPeriod, formatINR, statusColor } from "../lib/format";
 import Icon from "../components/Icon";
@@ -57,7 +58,12 @@ export default function Commitments() {
         icon="repeat"
         title="Commitments"
         description="Track recurring EMIs, loan payments, savings contributions, and the exact dates they were paid."
-        actions={<input type="month" className="input w-auto" value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Commitment month" />}
+        actions={
+          <>
+            <Link to="/calendar" className="btn-secondary"><Icon name="calendar" size={16} /> Money calendar</Link>
+            <input type="month" className="input w-auto" value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Commitment month" />
+          </>
+        }
       />
 
       {error && <div className="notice notice-danger"><div className="notice-body">{error}</div></div>}
